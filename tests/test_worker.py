@@ -283,6 +283,19 @@ def test_scoring_when_selected_ids_noncontiguous_covers_full_traces(scoring_obje
     # Then
     assert result["framesEvaluated"] == 5
     assert result["validSteps"] == 9
+    assert result["coverage"] == {
+        "horizon": 3,
+        "episodes": [
+            {"episode": 0, "originalFrames": 2, "scoredAnchors": 2,
+             "geometricFullAnchors": 0, "fullyValidChunks": 0,
+             "geometricTailAnchors": 2, "validRows": 3, "validRowsByHorizon": [2, 1, 0]},
+            {"episode": 2, "originalFrames": 3, "scoredAnchors": 3,
+             "geometricFullAnchors": 1, "fullyValidChunks": 1,
+             "geometricTailAnchors": 2, "validRows": 6, "validRowsByHorizon": [3, 2, 1]},
+        ],
+        "scoredAnchors": 5, "geometricFullAnchors": 1, "fullyValidChunks": 1,
+        "geometricTailAnchors": 4, "validRows": 9, "validRowsByHorizon": [5, 3, 1],
+    }
     assert [(t["episode"], t["frames"]) for t in result["traces"]] == [(0, [0, 1]), (2, [0, 1, 2])]
     assert result["traces"][1]["target"][0] == [210, 0.25]
     assert result["traces"][1]["predicted"][0] == [211, 0.75]

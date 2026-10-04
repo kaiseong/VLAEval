@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApi, eventStream } from "../src/api";
-import { jobRequestSchema } from "../src/contracts";
+import { jobRequestSchema, resultSchema } from "../src/contracts";
 import type { Job } from "../src/contracts";
 import { isTerminal, JobStore } from "../src/jobs";
 import { consumeLines, quoteShell, sshCommand, workerCommand } from "../src/remote";
@@ -35,6 +35,11 @@ function terminal(store: JobStore, id: string): Promise<Job> {
 }
 
 describe("input and SSH boundaries", () => {
+  test("parses legacy results without optional horizon coverage", () => {
+    const result = resultSchema.parse(resultFixture);
+    expect(result.coverage).toBeUndefined();
+  });
+
   test("requires explicit episodes and defaults to every selected frame", () => {
     expect(request.stride).toBe(1);
     expect(request.maxSamples).toBe(0);

@@ -479,6 +479,8 @@ def score_frames(dataset, policy, data, model, request, episodes):
     ]
     if request["maxSamples"] or request["stride"] != 1:
         warnings.append("Quick subset enabled: maxSamples/stride limit whole-episode coverage.")
+    horizon_counts = [0] * model.action_horizon
+    coverage = {}
     for completed, (index, episode, frame, length) in enumerate(selection, 1):
         raw = dataset[index]
         raw = {key: np.asarray(value) if hasattr(value, "numpy") else value for key, value in raw.items()}
@@ -503,6 +505,22 @@ def score_frames(dataset, policy, data, model, request, episodes):
             valid &= ~padding
         if not valid[0]:
             raise RuntimeError("Current action row cannot be padded.")
+        episode_coverage = coverage.setdefault(episode, {
+            "episode": episode, "originalFrames": length, "scoredAnchors": 0,
+            "geometricFullAnchors": 0, "fullyValidChunks": 0,
+            "geometricTailAnchors": 0, "validRows": 0,
+            "validRowsByHorizon": [0] * model.action_horizon,
+        })
+        episode_coverage["scoredAnchors"] += 1
+        geometric_full = frame + model.action_horizon <= length
+        episode_coverage["geometricFullAnchors"] += int(geometric_full)
+        episode_coverage["geometricTailAnchors"] += int(not geometric_full)
+        episode_coverage["fullyValidChunks"] += int(geometric_full and valid.all())
+        episode_coverage["validRows"] += int(valid.sum())
+        for step, is_valid in enumerate(valid):
+            if is_valid:
+                episode_coverage["validRowsByHorizon"][step] += 1
+                horizon_counts[step] += 1
         noise = np.random.default_rng(np.random.SeedSequence([request["seed"], episode, frame])).standard_normal(
             (model.action_horizon, model.action_dim)
         ).astype(np.float32)
@@ -543,6 +561,16 @@ def score_frames(dataset, policy, data, model, request, episodes):
         "perEpisode": [{"episode": ep, "framesEvaluated": int(m.counts[0]),
                         "mae": m.result()["mae"], "rmse": m.result()["rmse"]}
                        for ep, m in episode_metrics.items()],
+        "coverage": {
+            "horizon": model.action_horizon,
+            "episodes": list(coverage.values()),
+            "scoredAnchors": sum(item["scoredAnchors"] for item in coverage.values()),
+            "geometricFullAnchors": sum(item["geometricFullAnchors"] for item in coverage.values()),
+            "fullyValidChunks": sum(item["fullyValidChunks"] for item in coverage.values()),
+            "geometricTailAnchors": sum(item["geometricTailAnchors"] for item in coverage.values()),
+            "validRows": sum(item["validRows"] for item in coverage.values()),
+            "validRowsByHorizon": horizon_counts,
+        },
     })
     return result
 

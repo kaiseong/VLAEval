@@ -73,6 +73,18 @@ export const resultSchema = z.object({
   perHorizon: z.array(z.object({
     step: z.number().int(), count: z.number().int(), mae: metric.nullable(), rmse: metric.nullable(),
   })),
+  coverage: z.object({
+    horizon: z.number().int(),
+    episodes: z.array(z.object({
+      episode: z.number().int(), originalFrames: z.number().int(), scoredAnchors: z.number().int(),
+      geometricFullAnchors: z.number().int(), fullyValidChunks: z.number().int(),
+      geometricTailAnchors: z.number().int(), validRows: z.number().int(),
+      validRowsByHorizon: z.array(z.number().int()),
+    })),
+    scoredAnchors: z.number().int(), geometricFullAnchors: z.number().int(),
+    fullyValidChunks: z.number().int(), geometricTailAnchors: z.number().int(),
+    validRows: z.number().int(), validRowsByHorizon: z.array(z.number().int()),
+  }).optional(),
   mae: metric, rmse: metric, firstStepMae: metric, firstStepRmse: metric,
   latencyMs: z.object({ median: metric, p95: metric }),
   samples: z.array(z.object({
