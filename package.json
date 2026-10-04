@@ -8,6 +8,7 @@
     "start": "NODE_ENV=production bun src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "qa": "bun tests/e2e/qa.mjs",
     "build": "bun build ./index.html --outdir ./dist --minify"
   },
   "dependencies": {

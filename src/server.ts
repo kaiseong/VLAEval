@@ -1,8 +1,14 @@
 import index from "../index.html";
+import { isAbsolute } from "node:path";
 import { createApi } from "./api";
 import { JobStore } from "./jobs";
 
-const store = new JobStore(new URL("../.runs/", import.meta.url).pathname);
+const runsDirectoryOverride = process.env["VLAEVAL_RUNS_DIR"];
+if (runsDirectoryOverride !== undefined && !isAbsolute(runsDirectoryOverride)) {
+  throw new Error("VLAEVAL_RUNS_DIR must be an absolute directory path");
+}
+const runsDirectory = runsDirectoryOverride ?? new URL("../.runs/", import.meta.url).pathname;
+const store = new JobStore(runsDirectory);
 await store.initialize();
 const api = createApi(store);
 const server = Bun.serve({
