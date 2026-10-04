@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<robot name="RBY1_M_v1.2">
+  <link name="link_torso_5" />
+  <link name="link_right_arm_0" /><link name="link_right_arm_1" />
+  <link name="link_right_arm_2" /><link name="link_right_arm_3" />
+  <link name="link_right_arm_4" /><link name="link_right_arm_5" />
+  <link name="link_right_arm_6" /><link name="ee_right" />
+  <link name="link_left_arm_0" /><link name="link_left_arm_1" />
+  <link name="link_left_arm_2" /><link name="link_left_arm_3" />
+  <link name="link_left_arm_4" /><link name="link_left_arm_5" />
+  <link name="link_left_arm_6" /><link name="ee_left" />
+  <joint name="right_arm_0" type="revolute"><parent link="link_torso_5" /><child link="link_right_arm_0" /><origin xyz="0 -0.220 0.080073451539" rpy="0 0 0" /><axis xyz="0 0.93969262 -0.34202014" /></joint>
+  <joint name="right_arm_1" type="revolute"><parent link="link_right_arm_0" /><child link="link_right_arm_1" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="1 0 0" /></joint>
+  <joint name="right_arm_2" type="revolute"><parent link="link_right_arm_1" /><child link="link_right_arm_2" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="right_arm_3" type="revolute"><parent link="link_right_arm_2" /><child link="link_right_arm_3" /><origin xyz="0.031 0 -0.276" rpy="0 0 0" /><axis xyz="0 1 0" /></joint>
+  <joint name="right_arm_4" type="revolute"><parent link="link_right_arm_3" /><child link="link_right_arm_4" /><origin xyz="-0.031 0 -0.256" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="right_arm_5" type="revolute"><parent link="link_right_arm_4" /><child link="link_right_arm_5" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 1 0" /></joint>
+  <joint name="right_arm_6" type="revolute"><parent link="link_right_arm_5" /><child link="link_right_arm_6" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="tool_right" type="fixed"><parent link="link_right_arm_6" /><child link="ee_right" /><origin xyz="0 0 -0.1261" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="left_arm_0" type="revolute"><parent link="link_torso_5" /><child link="link_left_arm_0" /><origin xyz="0 0.220 0.080073452" rpy="0 0 0" /><axis xyz="0 0.93969262 0.34202014" /></joint>
+  <joint name="left_arm_1" type="revolute"><parent link="link_left_arm_0" /><child link="link_left_arm_1" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="1 0 0" /></joint>
+  <joint name="left_arm_2" type="revolute"><parent link="link_left_arm_1" /><child link="link_left_arm_2" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="left_arm_3" type="revolute"><parent link="link_left_arm_2" /><child link="link_left_arm_3" /><origin xyz="0.031 0 -0.276" rpy="0 0 0" /><axis xyz="0 1 0" /></joint>
+  <joint name="left_arm_4" type="revolute"><parent link="link_left_arm_3" /><child link="link_left_arm_4" /><origin xyz="-0.031 0 -0.256" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="left_arm_5" type="revolute"><parent link="link_left_arm_4" /><child link="link_left_arm_5" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 1 0" /></joint>
+  <joint name="left_arm_6" type="revolute"><parent link="link_left_arm_5" /><child link="link_left_arm_6" /><origin xyz="0 0 0" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+  <joint name="tool_left" type="fixed"><parent link="link_left_arm_6" /><child link="ee_left" /><origin xyz="0 0 -0.1261" rpy="0 0 0" /><axis xyz="0 0 1" /></joint>
+</robot>
