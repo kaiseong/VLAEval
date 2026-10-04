@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { Activity, ArrowRight, Check, Database, FolderSearch, History, Play, RefreshCw, Settings2, Square, Terminal } from "lucide-react";
 import { z } from "zod";
 import {
@@ -8,6 +7,7 @@ import {
 } from "../contracts";
 import { api, createdJobSchema, errorMessage, isActive, mergeJob, statusLabels } from "./api";
 import { Results } from "./Results";
+import { Field, Section } from "./ui/primitives";
 
 const defaults = {
   host: "rtx6000@192.168.0.3", repo: "/home/rtx6000/kgs/pi05_rby1",
@@ -35,24 +35,7 @@ function initialSettings(): Settings {
   }
 }
 
-export function Section({ title, subtitle, number, children, id }: {
-  readonly title: string; readonly subtitle: string; readonly number?: string;
-  readonly children: ReactNode; readonly id?: string;
-}) {
-  return <section className="panel" id={id}>
-    <header className="section-heading">
-      {number && <span className="step-number">{number}</span>}
-      <div><h2>{title}</h2><p>{subtitle}</p></div>
-    </header>
-    {children}
-  </section>;
-}
-
-export function Field({ label, children, hint }: {
-  readonly label: string; readonly children: ReactNode; readonly hint?: string;
-}) {
-  return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
-}
+export { Field, Section } from "./ui/primitives";
 
 export function App() {
   const [settings, setSettings] = useState(initialSettings);

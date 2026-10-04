@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Download, FileJson, LineChart } from "lucide-react";
 import type { z } from "zod";
 import { resultSchema, type Job } from "../contracts";
-import { Field, Section } from "./App";
+import { Field, Section } from "./ui/primitives";
 
 type Result = z.infer<typeof resultSchema>;
 type Point = { readonly frame: number; readonly predicted: number | undefined; readonly target: number | undefined };
