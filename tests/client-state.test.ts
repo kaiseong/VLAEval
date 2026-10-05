@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mergeJob } from "../src/client/api";
+import { isActive, mergeJob } from "../src/client/api";
 import { jobRequestSchema } from "../src/contracts";
 import type { Job } from "../src/contracts";
 import { resultFixture } from "./result-fixture";
@@ -32,4 +32,18 @@ test("terminal updates replace active jobs and retain other run history", () => 
   const jobs = mergeJob([previous, running], completed);
   expect(jobs.map((job) => job.id)).toEqual([completed.id, previous.id]);
   expect(jobs[0]?.status).toBe("completed");
+});
+
+test("saved result selection does not change the active cancellation identity", () => {
+  const saved: Job = { ...running, id: "e4a6a5b0-51ce-4313-8b8d-9b3f19a4c827", status: "completed", result: resultFixture };
+  const jobs = mergeJob([running], saved);
+  const displayed = jobs.find((job) => job.id === saved.id);
+  expect(displayed?.result).toEqual(resultFixture);
+  expect(jobs.filter(isActive).map((job) => job.id)).toEqual([running.id]);
+});
+
+test("a stale history refresh cannot revive a cancelled job", () => {
+  const cancelled: Job = { ...running, status: "cancelled" };
+  expect(mergeJob([cancelled], running).filter(isActive)).toEqual([]);
+  expect(mergeJob([cancelled], running)[0]?.status).toBe("cancelled");
 });

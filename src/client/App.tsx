@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowRight, Check, Database, FolderSearch, History, Play, RefreshCw, Settings2, Square, Terminal } from "lucide-react";
+import { Activity, Check, Database, FolderSearch, Play, RefreshCw, Settings2, Square, Terminal } from "lucide-react";
 import { z } from "zod";
 import {
   configsSchema, connectionSchema, discoverySchema, discoverRequestSchema,
@@ -8,6 +8,7 @@ import {
 import { api, createdJobSchema, errorMessage, isActive, mergeJob, statusLabels } from "./api";
 import { Results } from "./Results";
 import { Field, Section } from "./ui/primitives";
+import { WorkspaceNav, type WorkspaceView } from "./WorkspaceNav";
 
 const defaults = {
   host: "rtx6000@192.168.0.3", repo: "/home/rtx6000/kgs/pi05_rby1",
@@ -52,6 +53,8 @@ export function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
   const [displayId, setDisplayId] = useState("");
+  const [view, setView] = useState<WorkspaceView>("preparation");
+  const workspaceChosen = useRef(false);
   const [streamError, setStreamError] = useState("");
   const [streamVersion, setStreamVersion] = useState(0);
   const [cancelling, setCancelling] = useState("");
@@ -84,11 +87,17 @@ export function App() {
 
   async function loadHistory(signal?: AbortSignal) {
     setHistoryState("loading");
+    setError("");
     try {
       const data = jobSchema.array().parse(await api.get("/api/jobs", signal ? { signal } : {}).json());
       if (signal?.aborted) return;
       setJobs((current) => data.reduce(mergeJob, current));
-      setDisplayId((current) => current || data[0]?.id || "");
+      if (!workspaceChosen.current) {
+        const initial = data.find((job) => job.status === "completed" && job.result) ?? data[0];
+        setDisplayId(initial?.id ?? "");
+        setView(initial?.result ? "analysis" : "preparation");
+        workspaceChosen.current = true;
+      }
       setHistoryState("ready");
     } catch (cause) {
       if (signal?.aborted) return;
@@ -211,6 +220,8 @@ export function App() {
       const created = createdJobSchema.parse(await api.post("/api/jobs", { json: request }).json());
       // The backend owns timestamps/status; do not create a synthetic history item.
       setDisplayId(created.id);
+      setView("analysis");
+      workspaceChosen.current = true;
       const job = jobSchema.parse(await api.get(`/api/jobs/${created.id}`).json());
       setJobs((current) => mergeJob(current, job));
     } catch (cause) {
@@ -236,39 +247,42 @@ export function App() {
 
   return <div className="app-shell">
     <a className="skip-link" href="#main">본문으로 이동</a>
-    <aside className="sidebar">
+    <main id="main" className="main">
+    <header className="workspace-header">
       <div className="brand"><Activity aria-hidden="true" /><strong>VLA<span>Eval</span></strong><span className="badge">LOCAL</span></div>
-      <p className="rail-caption">오프라인 액션 평가</p>
-      <nav aria-label="주요 메뉴">
-        <a href="#prepare"><Play aria-hidden="true" />평가 준비<ArrowRight className="nav-arrow" aria-hidden="true" /></a>
-        <a href="#results"><Activity aria-hidden="true" />평가 결과</a>
-        <a href="#history"><History aria-hidden="true" />실행 기록</a>
-        <a href="#connection"><Settings2 aria-hidden="true" />연결 설정</a>
-      </nav>
-      <fieldset className="connection" id="connection" disabled={locked}>
-        <legend><Terminal size={16} aria-hidden="true" /> SSH 연결</legend>
-        <Field label="대상 호스트"><input value={settings.host} onChange={(event) => updateSettings("host", event.target.value)} spellCheck={false} /></Field>
-        <Field label="탐색 루트 · 한 줄에 하나" hint="최대 16개. 기존 파일만 탐색합니다."><textarea rows={6} value={settings.roots} onChange={(event) => updateSettings("roots", event.target.value)} spellCheck={false} /></Field>
-        <button type="button" onClick={() => void discover()}><FolderSearch size={17} aria-hidden="true" />{busy === "discover" ? "탐색 중…" : "아티팩트 탐색"}</button>
-      </fieldset>
+      <h1>에피소드 평가</h1>
+      <WorkspaceNav view={view} onChange={(next) => { workspaceChosen.current = true; setView(next); }} />
+      <Field label="실행 기록"><select id="history" value={displayId} onChange={(event) => { setDisplayId(event.target.value); setView("analysis"); workspaceChosen.current = true; }}>
+        <option value="">실행을 선택하세요</option>
+        {jobs.map((job) => <option key={job.id} value={job.id}>{job.request.config} · {statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")}</option>)}
+      </select></Field>
+      <button disabled={historyState === "loading"} onClick={() => void loadHistory()} aria-label="기록 새로고침"><RefreshCw size={16} aria-hidden="true" />{historyState === "loading" ? "불러오는 중…" : "새로고침"}</button>
       <div className="rail-footer">
         <Field label="화면 테마"><select value={settings.theme} onChange={(event) => updateSettings("theme", event.target.value)}><option value="system">시스템 설정</option><option value="light">라이트</option><option value="dark">다크</option></select></Field>
-        <p>RTX6000에 config, 체크포인트와 데이터셋을 먼저 준비하세요. 이 앱은 파일을 업로드하거나 수정하지 않습니다.</p>
       </div>
-    </aside>
-    <main id="main" className="main">
-      <header className="page-heading"><div><p className="eyebrow">EVALUATION WORKBENCH</p><h1>에피소드 평가</h1><p>준비된 모델의 예측 액션을 정답과 비교합니다.</p></div><span className="badge"><Terminal size={14} aria-hidden="true" /> SSH · RTX6000</span></header>
+    </header>
+      {historyState === "error" && <p role="alert" className="notice error">기록을 읽지 못했습니다. 오류를 확인하고 기록을 새로고침하세요.</p>}
+      {historyState === "ready" && !jobs.length && <p className="notice">저장된 실행이 없습니다. 첫 평가를 시작하세요.</p>}
       {storageError && <p className="notice" role="status">{storageError}</p>}
       {error && <div className="notice error" role="alert"><strong>요청을 완료하지 못했습니다</strong><pre>{error}</pre><button onClick={() => setError("")}>닫기</button></div>}
       {busy && <p className="notice" role="status">{busy === "discover" ? "SSH로 기존 아티팩트를 탐색하고 있습니다. 최대 3분이 걸릴 수 있습니다." : busy === "configs" ? "저장소에서 기존 config 목록을 읽고 있습니다." : "평가 실행을 요청하고 있습니다."}</p>}
-      {discovery && <div className="notice"><strong>탐색 완료</strong><p>저장소 {discovery.repositories.length} · 체크포인트 {discovery.checkpoints.length} · 데이터셋 {discovery.datasets.length}</p>{discovery.warnings.length > 0 && <details><summary>탐색 주의사항 {discovery.warnings.length}개</summary><div className="warning-list" tabIndex={0} role="region" aria-label="탐색 주의사항">{discovery.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div></details>}</div>}
+      {view === "preparation" && discovery && <div className="notice"><strong>탐색 완료</strong><p>저장소 {discovery.repositories.length} · 체크포인트 {discovery.checkpoints.length} · 데이터셋 {discovery.datasets.length}</p>{discovery.warnings.length > 0 && <details><summary>탐색 주의사항 {discovery.warnings.length}개</summary><div className="warning-list" tabIndex={0} role="region" aria-label="탐색 주의사항">{discovery.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div></details>}</div>}
       {streamError && <div className="notice" role="status"><p>{streamError}</p><button onClick={() => { setStreamError(""); setStreamVersion((value) => value + 1); }}><RefreshCw size={16} aria-hidden="true" />다시 연결</button></div>}
       {active.map((job) => <section className="run-progress panel" key={job.id} aria-label="진행 중인 평가">
         <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
         <progress aria-label="평가 진행률" value={job.progress.completed} max={Math.max(1, job.progress.total)} />
         <p className="mono" role="status">{job.progress.completed.toLocaleString()} / {job.progress.total.toLocaleString()} 프레임</p>
       </section>)}
-      <form id="prepare" onSubmit={(event) => { event.preventDefault(); if (prepared && !locked) void startJob(); }}>
+      <form id="prepare" hidden={view !== "preparation"} onSubmit={(event) => { event.preventDefault(); if (prepared && !locked) void startJob(); }}>
+        <details className="panel connection-disclosure" id="connection">
+          <summary><Settings2 size={16} aria-hidden="true" /> 연결 설정 <span className="muted path">{settings.host}</span></summary>
+          <fieldset className="connection" disabled={locked}>
+            <legend><Terminal size={16} aria-hidden="true" /> SSH 연결</legend>
+            <Field label="대상 호스트"><input value={settings.host} onChange={(event) => updateSettings("host", event.target.value)} spellCheck={false} /></Field>
+            <Field label="탐색 루트 · 한 줄에 하나" hint="최대 16개. 기존 파일만 탐색합니다."><textarea rows={3} value={settings.roots} onChange={(event) => updateSettings("roots", event.target.value)} spellCheck={false} /></Field>
+            <button type="button" onClick={() => void discover()}><FolderSearch size={17} aria-hidden="true" />{busy === "discover" ? "탐색 중…" : "아티팩트 탐색"}</button>
+          </fieldset>
+        </details>
         <fieldset className="preparation" disabled={locked}>
           <legend className="sr-only">평가 준비</legend>
           <div className="preparation-grid">
@@ -312,18 +326,12 @@ export function App() {
         </fieldset>
       </form>
       {locked && <p className="muted">{active.length ? "진행 중인 평가가 있어 요청 설정이 잠겨 있습니다. 결과와 실행 기록은 계속 확인할 수 있습니다." : historyState !== "ready" ? "저장된 실행 상태를 확인한 뒤 새 평가를 시작할 수 있습니다." : "현재 요청이 끝나면 설정을 변경할 수 있습니다."}</p>}
-      <div id="results">
+      <div id="results" hidden={view !== "analysis"}>
         {displayed?.result ? <Results key={displayed.id} job={displayed} /> : <Section title="평가 결과" subtitle="저장된 실행을 선택하거나 새 평가를 시작하세요.">
           <div className="empty"><Activity size={32} aria-hidden="true" /><h3>{displayed ? statusLabels[displayed.status] : "아직 표시할 결과가 없습니다"}</h3><p>{displayed?.error || (displayed?.status === "cancelled" ? "평가가 취소되었습니다. 설정을 확인한 후 새 평가를 시작하세요." : displayed && isActive(displayed) ? "평가가 끝나면 액션 그래프와 수치 지표가 표시됩니다." : "선택한 에피소드의 예측과 정답을 여기서 비교합니다.")}</p></div>
         </Section>}
         {displayed && <details className="panel logs"><summary>선택 실행 로그 · {statusLabels[displayed.status]}</summary><pre>{displayed.logs.join("\n") || "저장된 로그가 없습니다."}</pre></details>}
       </div>
-      <Section id="history" title="실행 기록" subtitle="서버에 저장된 평가를 다시 열 수 있습니다.">
-        <div className="cluster spread"><span className="muted">{jobs.length}개 실행</span><button disabled={historyState === "loading"} onClick={() => void loadHistory()}><RefreshCw size={16} aria-hidden="true" />{historyState === "loading" ? "불러오는 중…" : "기록 새로고침"}</button></div>
-        {historyState === "error" && <p role="alert" className="notice error">기록을 읽지 못했습니다. 위 오류를 확인하고 다시 불러오세요.</p>}
-        {historyState === "ready" && !jobs.length && <p className="empty compact">저장된 실행이 없습니다. 첫 평가를 시작하세요.</p>}
-        <div className="history-list">{jobs.map((job) => <button key={job.id} className={`history-row ${displayId === job.id ? "selected" : ""}`} onClick={() => setDisplayId(job.id)} aria-pressed={displayId === job.id}><span><strong>{job.request.config}</strong><small>{new Date(job.createdAt).toLocaleString("ko-KR")} · {job.request.episodes.length} 에피소드</small><small className="path">{job.request.dataset}</small></span><span className="badge">{displayId === job.id && <Check size={14} aria-hidden="true" />}{statusLabels[job.status]}</span></button>)}</div>
-      </Section>
       <footer className="page-footer">VLAEval · 기존 아티팩트의 오프라인 평가 · 업로드 / 학습 / 로봇 제어 없음</footer>
     </main>
   </div>;
