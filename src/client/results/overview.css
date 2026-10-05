@@ -1,0 +1,34 @@
+.overview { min-width: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.overview__heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); margin-bottom: var(--s3); }
+.overview__heading h2 { font-size: var(--section); margin: 0; }
+.overview__heading p { color: var(--muted); margin: 0; font-size: var(--caption); }
+.overview__legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--caption); color: var(--muted); }
+.overview__legend span { display: inline-flex; align-items: center; gap: var(--s2); }
+.overview__legend i { width: var(--s5); border-top: 2px solid var(--accent); }
+.overview__legend span:last-child i { border-top: 2px dashed var(--target); }
+.overview__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
+.overview-panel { min-width: 0; padding: var(--s2); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.overview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: var(--s1); }
+.overview-panel button { min-width: 0; min-height: 44px; padding: var(--s1); background: transparent; border: 0; text-align: start; font-size: var(--body); font-weight: 650; overflow-wrap: anywhere; }
+.overview-panel button:hover { background: var(--secondary); }
+.overview-panel button:active { background: var(--wash); }
+.overview-panel__stats { display: flex; flex-wrap: wrap; gap: 0 var(--s2); margin: 0; font-size: var(--caption); }
+.overview-panel__stats > div { display: flex; gap: var(--s1); }
+.overview-panel__stats dt { color: var(--muted); }
+.overview-panel__stats dd { margin: 0; }
+.overview-panel .trace-plot figcaption, .overview-panel .trace-plot__inspection { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.overview-panel .trace-plot svg { height: calc(var(--s8) * 4); }
+.overview-panel .trace-plot svg text { font-size: calc(var(--caption) * 1.25); }
+.overview-panel .trace-plot__inspection { margin: 0; }
+.overview-panel__unavailable, .overview__notice { color: var(--muted); font-size: var(--body); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .overview__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-panel > header { flex-direction: column; align-items: stretch; }
+  .overview-panel button { width: 100%; }
+  .overview-panel__stats { flex-direction: column; }
+  .overview-panel .trace-plot__inspection { font-size: var(--body); }
+  .overview-panel .trace-plot svg { height: 160px; }
+  .overview-panel .trace-plot svg text { font-size: var(--caption); }
+  /* Narrow plots keep the end tick; the shared header labels both window bounds. */
+  .overview-panel .trace-plot svg:has(> text:nth-of-type(5)) > text:nth-of-type(-n+2) { visibility: hidden; }
+}
