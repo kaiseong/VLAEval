@@ -8,6 +8,7 @@ import { isTerminal, JobError } from "./jobs";
 import type { JobStore } from "./jobs";
 import { RemoteError, runRemote } from "./remote";
 import type { RemoteRequest } from "./remote";
+import { ProfileCatalog, ProfileCatalogError } from "./kinematics/catalog";
 
 async function collect(request: RemoteRequest): Promise<WorkerEvent> {
   let response: WorkerEvent | null = null;
@@ -53,7 +54,7 @@ export function eventStream(request: Request, store: JobStore, id: string): Resp
   });
 }
 
-export function createApi(store: JobStore): (request: Request) => Promise<Response> {
+export function createApi(store: JobStore, profiles = new ProfileCatalog()): (request: Request) => Promise<Response> {
   return async (request) => {
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
@@ -63,6 +64,13 @@ export function createApi(store: JobStore): (request: Request) => Promise<Respon
       return Response.json({ error: "로컬 동일 출처 요청만 허용합니다." }, { status: 403 });
     }
     try {
+      if (request.method === "GET" && url.pathname === "/api/kinematics/profiles") {
+        return Response.json(await profiles.list(), { headers: { "Cache-Control": "no-store" } });
+      }
+      const profileMatch = /^\/api\/kinematics\/profiles\/([a-f0-9]{64})$/.exec(url.pathname);
+      if (request.method === "GET" && profileMatch?.[1]) {
+        return Response.json(await profiles.get(profileMatch[1]), { headers: { "Cache-Control": "no-store" } });
+      }
       if (url.pathname === "/api/jobs" && request.method === "GET") return Response.json(store.list());
       if (url.pathname === "/api/jobs" && request.method === "POST") {
         const job = await store.start(jobRequestSchema.parse(await request.json()));
@@ -92,7 +100,8 @@ export function createApi(store: JobStore): (request: Request) => Promise<Respon
         default: return Response.json({ error: "경로를 찾을 수 없습니다." }, { status: 404 });
       }
     } catch (error) {
-      const status = error instanceof JobError ? error.status
+      const status = error instanceof ProfileCatalogError ? error.status
+        : error instanceof JobError ? error.status
         : error instanceof z.ZodError || error instanceof SyntaxError ? 400
         : error instanceof RemoteError ? 502 : 500;
       return Response.json({
