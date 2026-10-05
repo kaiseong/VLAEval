@@ -105,3 +105,52 @@ test("supplied geometry follows the same controlled window and domain", () => {
   expect(zoom.min).toBe(-5);
   expect(zoom.max).toBe(5);
 });
+
+test("numeric axis notation stays bounded without zeroing tiny or extreme raw values", () => {
+  // Given: genuine finite values, including the singularity-sized negative tick.
+  for (const value of [-7.7214e-15, 1e-320, -1e308, 1e308, -126.1, 0, 179]) {
+    const input = { frames: [3], predicted: [value], target: [value], fps: 30 };
+    const original = structuredClone(input);
+    // When: the production component renders an axis and a raw inspector.
+    const rendered = markup({ series: input, window: { startFrame: 3, endFrame: 3 }, detail: true });
+    const ticks = [...rendered.matchAll(/<text x="[^"]+" y="[^"]+" text-anchor="end">([^<]+)<\/text>/g)]
+      .map((match) => match[1] ?? "");
+    // Then: axis labels are finite compact numbers; inspection keeps its own precision.
+    expect(ticks).toHaveLength(1);
+    const tick = ticks[0] ?? "";
+    expect(tick.length).toBeLessThanOrEqual(9);
+    expect(Number.isFinite(Number(tick))).toBe(true);
+    if (value !== 0) {
+      expect(Number(tick)).not.toBe(0);
+      expect(Math.abs(Number(tick) / value - 1)).toBeLessThan(0.02);
+    }
+    expect(rendered).toContain(`Prediction ${value.toLocaleString("en-US", { maximumSignificantDigits: 5 })}`);
+    expect(input).toEqual(original);
+  }
+});
+
+test("late narrow windows retain distinct readable absolute time ticks", () => {
+  // Given: the parent's late-window reproduction, in both chart presentations.
+  const input = { frames: [99980, 99990, 99999], predicted: [0, 1, 2], target: [0, 1, 2], fps: 30 };
+  const original = structuredClone(input);
+  const lateWindow = { startFrame: 99980, endFrame: 99999 };
+  const expectedSeconds = [99980 / 30, 99989.5 / 30, 99999 / 30];
+  for (const compact of [false, true]) {
+    // When: the actual TracePlot renders the controlled source-frame window.
+    const rendered = markup({ series: input, window: lateWindow, sourceFrame: 99990, compact });
+    const ticks = [...rendered.matchAll(/<text x="([^"]+)" y="(?:124|304)" text-anchor="([^"]+)">([^<]+)<\/text>/g)];
+    // Then: all positions remain distinct and accurate relative to tick spacing.
+    expect(ticks).toHaveLength(3);
+    const labels = ticks.map((tick) => tick[3] ?? "");
+    expect(new Set(labels).size).toBe(3);
+    labels.forEach((label, index) => {
+      expect(label.length).toBeLessThanOrEqual(9);
+      expect(Math.abs(Number(label) - (expectedSeconds[index] ?? NaN))).toBeLessThan(0.01);
+    });
+    expect(ticks.map((tick) => tick[2])).toEqual(["start", "middle", "end"]);
+    expect(ticks.map((tick) => Number(tick[1]))).toEqual([88, 216, 344]);
+    expect(rendered).toContain('data-source-frame="99990"');
+    expect(rendered).toContain("3333.000 s");
+    expect(input).toEqual(original);
+  }
+});

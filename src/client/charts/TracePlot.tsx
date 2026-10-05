@@ -56,10 +56,12 @@ export function tracePlotGeometry(options: LayoutOptions) {
     predicted: first < 0 ? [] : series.predicted.slice(first, end),
     target: first < 0 ? [] : series.target.slice(first, end),
   };
-  const left = width < 240 ? 40 : 60;
+  // Reserve readable space for bounded scientific ticks, including narrow plots.
+  const left = 88;
   const right = Math.max(left + 1, width - 16);
-  const top = 24;
-  const bottom = height - 44;
+  // Keep the unit caption above the top tick at the readable overview font size.
+  const top = 48;
+  const bottom = height - 60;
   const sampled = options.geometry ?? sampleRenderGeometry(visible, {
     pixelWidth: Math.max(1, Math.floor(right - left)),
     ...(options.wrapThreshold === undefined ? {} : { wrapThreshold: options.wrapThreshold }),
@@ -107,11 +109,27 @@ const displayValue = (value: number | null | undefined) => typeof value === "num
   ? value.toLocaleString("en-US", { maximumSignificantDigits: 5 })
   : "unavailable";
 
+/** Axis presentation only; raw inspection retains its separate precision. */
+const axisValue = (value: number) => {
+  const decimal = value.toLocaleString("en-US", { maximumSignificantDigits: 3, useGrouping: false });
+  return decimal.length <= 6 ? decimal : value.toExponential(1).replace("e+", "e");
+};
+
+/** Absolute time needs precision relative to the visible tick interval, not zero. */
+const timeAxisValue = (value: number, significantDigits: number) => {
+  const decimal = value.toLocaleString("en-US", { maximumSignificantDigits: significantDigits, useGrouping: false });
+  return decimal.length <= 9 ? decimal : value.toExponential(significantDigits - 1).replace("e+", "e");
+};
+
 export function TracePlot(props: TracePlotProps) {
   const { series, sourceFrame, window, yDomain, labels, onFrameSelect } = props;
   const compact = props.compact === true && props.detail !== true;
   const height = compact ? 160 : 340;
+  const timeDigits = window.startFrame === window.endFrame ? 3
+    : Math.min(21, Math.max(3, Math.floor(Math.log10(2 * window.endFrame / (window.endFrame - window.startFrame))) + 2));
   const [width, setWidth] = useState(360);
+  const stackedTimeAxis = compact && width < 240;
+  const axisHeight = height + (stackedTimeAxis ? 64 : 0);
   const svgRef = useRef<SVGSVGElement>(null);
   const id = useId();
   useEffect(() => {
@@ -155,7 +173,8 @@ export function TracePlot(props: TracePlotProps) {
     data-window-end={window.endFrame} data-unit={labels.unit}>
     <figcaption id={`${id}-title`}><strong>{labels.title}</strong><span>{labels.unit}</span></figcaption>
     {!compact && <div className="trace-plot__legend"><span><i />Prediction (solid)</span><span><i />GT (dashed)</span></div>}
-    <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} height={height}
+    <svg ref={svgRef} viewBox={`0 0 ${width} ${axisHeight}`} height={axisHeight}
+      style={stackedTimeAxis ? { height: axisHeight } : undefined}
       role={frames.length ? "slider" : "img"} tabIndex={frames.length ? 0 : undefined}
       aria-labelledby={`${id}-title`} aria-describedby={`${id}-help`}
       aria-valuemin={frames[0]} aria-valuemax={frames.at(-1)}
@@ -188,13 +207,13 @@ export function TracePlot(props: TracePlotProps) {
         {(layout.min === layout.max ? [0.5] : [0, 0.5, 1]).map((fraction) => {
           const value = layout.min * (1 - fraction) + layout.max * fraction;
           return <g key={fraction}><line className="trace-plot__grid" x1={layout.left} x2={layout.right} y1={layout.y(value)} y2={layout.y(value)} />
-            <text x={layout.left - 8} y={layout.y(value) + 4} textAnchor="end">{displayValue(value)}</text></g>;
+            <text x={layout.left - 8} y={layout.y(value) + 4} textAnchor="end">{axisValue(value)}</text></g>;
         })}
-        {(window.startFrame === window.endFrame ? [0.5] : [0, 0.5, 1]).map((fraction) => {
+        <g className="trace-plot__time-axis">{(window.startFrame === window.endFrame ? [0.5] : [0, 0.5, 1]).map((fraction, tickIndex) => {
           const frame = window.startFrame * (1 - fraction) + window.endFrame * fraction;
-          return <text key={fraction} x={layout.x(frame)} y={height - 24} textAnchor={fraction === 0 ? "start" : fraction === 1 ? "end" : "middle"}>{displayValue(frame / series.fps)}</text>;
-        })}
-        <text x={layout.left} y={16}>{labels.unit}</text><text x={(layout.left + layout.right) / 2} y={height - 4} textAnchor="middle">Time (s)</text>
+          return <text key={fraction} x={layout.x(frame)} y={height - 36 + (stackedTimeAxis ? tickIndex * 24 : 0)} textAnchor={fraction === 0 ? "start" : fraction === 1 ? "end" : "middle"}>{timeAxisValue(frame / series.fps, timeDigits)}</text>;
+        })}</g>
+        <text x={8} y={24}>{labels.unit}</text><text x={(layout.left + layout.right) / 2} y={axisHeight - 12} textAnchor="middle">Time (s)</text>
         {layout.sampled.unavailableBands.map((band, bandIndex) => <g key={bandIndex} data-gap-density="unavailable">
           <rect className="trace-plot__band" x={layout.x(Math.max(window.startFrame, band.startFrame))}
             y={layout.top} width={Math.max(0, layout.x(Math.min(window.endFrame, band.endFrame)) - layout.x(Math.max(window.startFrame, band.startFrame)))} height={layout.bottom - layout.top} />
