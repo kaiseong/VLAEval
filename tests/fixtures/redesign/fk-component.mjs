@@ -7,8 +7,9 @@ import { OverviewGrid } from "../../../src/client/results/OverviewGrid";
 import { FkController } from "../../../src/client/analysis/fk-controller";
 import { compiledProfileSchema } from "../../../src/kinematics/contracts";
 import { deriveForward } from "../../../src/kinematics/forward";
+import { buildFkView, fkPoseSeries } from "../../../src/client/analysis/fk-view";
 import { rotationError } from "../../../src/kinematics/math";
-import { fkJsonExport, fkCsvExport, rawJsonExport, rawTraceCsv } from "../../../src/client/analysis/exports";
+import { currentFkExport, fkJsonExport, fkCsvExport, rawJsonExport, rawTraceCsv } from "../../../src/client/analysis/exports";
 import { fixtureSnapshot } from "./index.mjs";
 import "../../../src/client/styles.css";
 
@@ -34,8 +35,11 @@ export async function mount(element, props = {}) {
     holdNext = false;
     // Hold only actual production Worker messages; retain the old callback to probe generation rejection.
     const adapter = { onmessage: null, onerror: null, onmessageerror: null,
-      postMessage(request) { const deliver = adapter.onmessage; worker.postMessage(request);
-        worker.onmessage = (event) => { held.push(() => deliver?.(event)); state.events.push({ action: "held-worker-result", generation: request.generation }); signal(); }; },
+      postMessage(command, transfer) { const deliver = adapter.onmessage; worker.postMessage(command, transfer);
+        worker.onmessage = (event) => {
+          if (event.data.kind !== "view" || event.data.serial !== 0) { deliver?.(event); return; }
+          held.push(() => deliver?.(event)); state.events.push({ action: "held-worker-result", generation: command.request.generation }); signal();
+        }; },
       terminate() { worker.terminate(); } };
     worker.onerror = (event) => adapter.onerror?.(event);
     worker.onmessageerror = (event) => adapter.onmessageerror?.(event);
@@ -43,6 +47,14 @@ export async function mount(element, props = {}) {
   });
   let sequence = 0;
   function signal() { document.dispatchEvent(new CustomEvent("fk-showcase-change", { detail: ++sequence })); }
+  function select() {
+    const selection = { sourceFrame: state.sourceFrame, window: state.window };
+    if (props.live) controller.select(selection);
+    else if (state.fk.status === "ready" && state.completed) state.fk = { ...state.fk,
+      view: buildFkView(fkPoseSeries(state.completed, result.fps), selection),
+      selected: state.completed.samples.find(sample => sample.frame === state.sourceFrame) ?? null };
+    render();
+  }
   let selection = 0;
   async function change(settings) {
     const token = ++selection;
@@ -63,8 +75,16 @@ export async function mount(element, props = {}) {
       if (admission.kind === "unavailable") controller.invalidate(admission.reason);
       else {
         state.request = admission.request;
-        if (props.live) controller.start(admission.request);
-        else { state.fk = { status: "ready", result: deriveForward({ ...admission.request, generation: 1 }) }; render(); }
+        if (props.live) controller.start(admission.request, { sourceFrame: state.sourceFrame, window: state.window });
+        else {
+          state.completed = deriveForward({ ...admission.request, generation: 1 });
+          const { samples, ...metadata } = state.completed;
+          state.fk = { status: "ready", result: { ...metadata, frameCount: samples.length,
+            firstFrame: samples[0]?.frame ?? null, lastFrame: samples.at(-1)?.frame ?? null },
+            view: buildFkView(fkPoseSeries(state.completed, result.fps), { sourceFrame: state.sourceFrame, window: state.window }),
+            selected: samples.find(sample => sample.frame === state.sourceFrame) ?? null };
+          render();
+        }
       }
     } catch (error) {
       if (token === selection) controller.invalidate(error instanceof Error ? error.message : String(error));
@@ -76,7 +96,10 @@ export async function mount(element, props = {}) {
       React.createElement("p", null, props.live ? "QA: actual catalog API and production Worker; synthetic recorded actions." : "QA: synthetic component data, not integrated result acceptance."),
       React.createElement(FKSettings, { value: state.settings, profiles, onChange: change }),
       React.createElement("div", { className: "fk-showcase-actions" },
-        React.createElement("button", { "data-fk-zoom": true, onClick() { state.window = { startFrame: 1, endFrame: 2 }; render(); } }, "Zoom frame window"),
+        React.createElement("button", { "data-fk-zoom": true, onClick() {
+          state.window = { startFrame: 1, endFrame: 2 };
+          select();
+        } }, "Zoom frame window"),
         React.createElement("button", { "data-fk-episode": true, onClick() { state.episode++; change(state.settings); } }, "Switch episode"),
         React.createElement("button", { "data-fk-hold": true, onClick() { holdNext = true; change(state.settings); } }, "Hold next Worker result"),
         React.createElement("button", { "data-fk-release": true, onClick() { held.splice(0).forEach((release) => release()); signal(); } }, "Release old Worker results"),
@@ -94,7 +117,7 @@ export async function mount(element, props = {}) {
           profile = request.profile;
           state.request = request;
           state.sourceFrame = 0;
-          controller.start(request);
+          controller.start(request, { sourceFrame: state.sourceFrame, window: state.window });
         } }, "Probe yaw wrap and SI conversion"),
         React.createElement("button", { "data-fk-numeric": "singular", onClick() {
           const request = structuredClone(template);
@@ -106,7 +129,7 @@ export async function mount(element, props = {}) {
           profile = request.profile;
           state.request = request;
           state.sourceFrame = 0;
-          controller.start(request);
+          controller.start(request, { sourceFrame: state.sourceFrame, window: state.window });
         } }, "Probe Euler singularity"),
         ...["missing-root", "digest", "mapping", "unknown-profile"].map((failure) => React.createElement("button", {
           key: failure, "data-fk-invalid": failure, onClick() {
@@ -121,24 +144,39 @@ export async function mount(element, props = {}) {
             controller.invalidate(admission.reason);
           },
         }, `Probe ${failure}`)),
-        React.createElement("button", { "data-fk-export": true, disabled: state.fk.status !== "ready", onClick() {
-          const completed = props.live ? controller.exportResult : state.fk.result;
+        React.createElement("button", { "data-fk-export": true, disabled: state.fk.status !== "ready", async onClick() {
+          if (props.live) {
+            const json = await currentFkExport(controller, "json"), csv = await currentFkExport(controller, "csv");
+            if (!json || !csv) throw new Error("No matching derivation");
+            state.exports = { json: { ...json, content: await json.content.text() }, csv: { ...csv, content: await csv.content.text() } };
+            signal(); return;
+          }
+          const completed = state.completed;
           if (!completed || !profile) throw new Error("No matching derivation");
           const input = { identity: completed, completed, context: { profile, sourceJobId: job.id, sourceEpisode: state.episode } };
           state.exports = { json: fkJsonExport(input), csv: fkCsvExport(input) };
           signal();
         } }, "Prepare derived export")),
-      React.createElement(FKPanel, { state: state.fk, fps: result.fps, sourceFrame: state.sourceFrame, window: state.window, onFrameSelect(frame) { state.sourceFrame = frame; render(); } }),
+      React.createElement(FKPanel, { state: state.fk, frames: state.request?.frames.map(sample => sample.frame) ?? [],
+        fps: result.fps, sourceFrame: state.sourceFrame, window: state.window, onFrameSelect(frame) {
+          state.sourceFrame = frame; select();
+        } }),
       React.createElement(OverviewGrid, { actionNames: result.actionNames, series: { ...trace, fps: result.fps },
-        sourceFrame: state.sourceFrame, window: state.window, onFrameSelect(frame) { state.sourceFrame = frame; render(); }, onDetailOpen() {} }))));
+        sourceFrame: state.sourceFrame, window: state.window, onFrameSelect(frame) { state.sourceFrame = frame; select(); }, onDetailOpen() {} }))));
     signal();
   }
   element.addEventListener("click", (event) => state.events.push({ action: "click", trusted: event.isTrusted }));
   element.addEventListener("keydown", (event) => state.events.push({ action: "key", key: event.key, trusted: event.isTrusted }));
   window.__FK_QA__ = { state, profiles, rawBefore, rawNow: () => ({ json: rawJsonExport(result), csv: rawTraceCsv(result) }),
-    quaternionSignError() {
+    async complete() {
+      const artifact = await currentFkExport(controller, "json");
+      if (!artifact) throw new Error("No current complete result");
+      return JSON.parse(await artifact.content.text());
+    },
+    async quaternionSignError() {
       if (state.fk.status !== "ready") throw new Error("Not ready");
-      const q = state.fk.result.samples[0].arms.right.pose.predicted.quaternionXyzw;
+      const completed = props.live ? await this.complete() : state.completed;
+      const q = completed.samples[0].arms.right.pose.predicted.quaternionXyzw;
       return rotationError(q, q.map((value) => -value));
     },
     controller, holdCount: () => held.length,

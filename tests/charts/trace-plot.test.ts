@@ -34,6 +34,20 @@ test("irregular source frames determine time-aligned x coordinates and shared wi
   expect(series).toEqual(original);
 });
 
+test("fractional window end excludes the next source frame and its extreme", () => {
+  // Given a finite window whose end lies between two integer source frames.
+  const input = { frames: [0, 1, 2], predicted: [0, 1, 100], target: [0, 1, 100], fps: 30 };
+  const selectedWindow = { startFrame: 0, endFrame: 1.5 };
+  // When the native chart derives its visible geometry and numerical domain.
+  const geometry = ready(layout(input, { window: selectedWindow }));
+  // Then neither the out-of-window point nor its extreme influences the chart.
+  expect(geometry.visible.frames).toEqual([0, 1]);
+  expect([geometry.min, geometry.max]).toEqual([0, 1]);
+  expect(geometry.paths.predicted.flat().map((point) => point.frame)).toEqual([0, 1]);
+  expect(geometry.x(1)).toBeCloseTo(geometry.left + (geometry.right - geometry.left) / 1.5);
+  expect(selectedWindow).toEqual({ startFrame: 0, endFrame: 1.5 });
+});
+
 test("empty, invalid domain and misaligned series never create geometry", () => {
   expect(layout({ frames: [], predicted: [], target: [], fps: 30 }).kind).toBe("empty");
   expect(layout(series, { yDomain: [NaN, 1] }).kind).toBe("invalid");

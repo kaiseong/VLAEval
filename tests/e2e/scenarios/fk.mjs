@@ -130,27 +130,29 @@ export async function runScenario({ args, outputPath, startHarness }) {
     } else if (testCase === "fk-values") {
       await arm(`window.__FK_QA__.state.fk.status==="ready" && window.__FK_QA__.state.fk.result.jointUnit==="deg"`);
       await click('[data-fk-numeric="yaw"]'); await settled();
-      const numerical = await read("window.__FK_QA__.state.fk.result");
+      const numerical = JSON.parse(await page.evaluate("window.__FK_QA__.complete().then(JSON.stringify)"));
       assert("actual-worker-179-minus179-two-degree-error", Math.abs(numerical.samples[0].arms.right.errors.orientationRad * 180 / Math.PI - 2) < 1e-9);
-      assert("actual-worker-0.1m-displayed-100mm", await read(`Math.abs(window.__FK_QA__.state.fk.result.samples[2].arms.right.pose.predicted.translationM[0]-.1)<1e-12`));
-      assert("production-quaternion-sign-equivalence", await read(`Math.abs(window.__FK_QA__.quaternionSignError())<1e-12`));
+      assert("actual-worker-0.1m-displayed-100mm", Math.abs(numerical.samples[2].arms.right.pose.predicted.translationM[0]-.1)<1e-12);
+      assert("production-quaternion-sign-equivalence", await page.evaluate("window.__FK_QA__.quaternionSignError().then(value=>Math.abs(value)<1e-12)"));
       assert("yaw-wrap-path-not-bridged", await read(`document.querySelector('[data-fk-channel="right-Yaw"] .trace-plot__target').children.length>=2`));
       await page.evaluate(`document.querySelector('[data-fk-channel="right-Yaw"]').scrollIntoView({block:"center"})`);
       await shot("yaw-wrap");
-      await arm(`window.__FK_QA__.state.fk.status==="ready" && window.__FK_QA__.state.fk.result.samples[0].arms.right.pose.predicted.rpyDeg[0]===null`);
+      await arm(`window.__FK_QA__.state.fk.status==="ready" && window.__FK_QA__.state.fk.selected?.arms.right.pose.predicted.rpyDeg[0]===null`);
       await click('[data-fk-numeric="singular"]'); await settled();
-      assert("pitch90-RY-gap-position-SO3-valid", await read(`document.querySelector("[data-fk-singularity]")!==null && window.__FK_QA__.state.fk.result.samples[0].arms.right.valid && window.__FK_QA__.state.fk.result.samples[0].arms.right.pose.predicted.rpyDeg[2]===null`));
+      assert("pitch90-RY-gap-position-SO3-valid", await read(`document.querySelector("[data-fk-singularity]")!==null && window.__FK_QA__.state.fk.selected.arms.right.valid && window.__FK_QA__.state.fk.selected.arms.right.pose.predicted.rpyDeg[2]===null`));
       await page.evaluate(`document.querySelector("[data-fk-singularity]").scrollIntoView({block:"start"})`);
       await shot("singular");
     } else {
-      await click("[data-fk-export]");
+      await arm("window.__FK_QA__.state.exports?.json&&window.__FK_QA__.state.exports?.csv");
+      await click("[data-fk-export]"); await settled();
       const exports = await read("window.__FK_QA__.state.exports");
       const document = JSON.parse(exports.json.content);
       assert("production-exports-full-data-and-provenance", document.samples.length === 3 && document.source.frames.join(",") === "0,1,2" && document.declaration.convention.source === "user_declared" && exports.csv.content.includes("orientation_error_rad"));
       await writeFile(join(outputPath, "derived.json"), exports.json.content);
       await writeFile(join(outputPath, "derived.csv"), exports.csv.content);
     }
-    await click("[data-fk-zoom]");
+    await arm("window.__FK_QA__.state.fk.status==='ready'&&window.__FK_QA__.state.fk.view.window.startFrame===1");
+    await click("[data-fk-zoom]"); await settled();
     await click('[data-fk-channel="right-X"] svg');
     await key("End", "End", 35);
     assert("trusted-keyboard-shared-frame-and-window", await read(`window.__FK_QA__.state.sourceFrame===2 && [...document.querySelectorAll(".trace-plot")].every(e=>e.dataset.sourceFrame==="2" && e.dataset.windowStart==="1")`));
@@ -158,8 +160,29 @@ export async function runScenario({ args, outputPath, startHarness }) {
     assert("trusted-interaction-evidence", await read(`window.__FK_QA__.state.events.some(e=>e.action==="key"&&e.trusted) && window.__FK_QA__.state.events.some(e=>e.action==="click"&&e.trusted)`));
     assert("no-horizontal-overflow", await read("document.documentElement.scrollWidth<=innerWidth"));
     await shot("linked");
+    await arm("window.__FK_QA__.state.fk.status==='ready'&&window.__FK_QA__.state.fk.selected?.frame===2");
+    await settled();
+    const selectedExport = JSON.parse(await page.evaluate("window.__FK_QA__.complete().then(JSON.stringify)"));
+    const selectedSample = selectedExport.samples.find(sample => sample.frame === 2);
     const channelNames = await read(`[...document.querySelectorAll("[data-fk-channel]")].map(e=>e.dataset.fkChannel)`);
     for (const name of channelNames) {
+      await click(`[data-fk-channel="${name}"] summary`);
+      const shown = await read(`(()=>{
+        const panel=document.querySelector(${JSON.stringify(`[data-fk-channel="${name}"]`)});
+        const output=panel.querySelector('[data-fk-point]'),rect=output.getBoundingClientRect();
+        return {open:panel.querySelector('details').open,visible:rect.width>0&&rect.height>0,
+          predicted:panel.querySelector('[data-fk-predicted]').textContent,target:panel.querySelector('[data-fk-target]').textContent,
+          touchHeight:panel.querySelector('summary').getBoundingClientRect().height};
+      })()`);
+      const [side, axis] = name.split("-");
+      const dimension = ["X", "Y", "Z", "Roll", "Pitch", "Yaw"].indexOf(axis);
+      const expected = path => {
+        const pose = selectedSample.arms[side].pose[path];
+        const value = dimension < 3 ? pose.translationM?.[dimension] ?? null : pose.rpyDeg[dimension - 3];
+        return value === null ? "unavailable" : String(value * (dimension < 3 ? 1000 : 1));
+      };
+      assert(`exact-point-${name}-visible-and-matches-current-full-export`,
+        shown.open && shown.visible && shown.touchHeight >= 44 && shown.predicted === expected("predicted") && shown.target === expected("target"), shown);
       await page.evaluate(`document.querySelector(${JSON.stringify(`[data-fk-channel="${name}"]`)}).scrollIntoView({block:"center"})`);
       await shot(`channel-${name}`);
     }

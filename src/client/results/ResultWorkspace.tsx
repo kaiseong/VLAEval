@@ -8,8 +8,9 @@ import type { CompiledProfile } from "../../kinematics/contracts";
 import { createChannelLayout } from "../analysis/channel-layout";
 import { FkController } from "../analysis/fk-controller";
 import type { FkState } from "../analysis/fk-controller";
-import { rawJsonExport, rawTraceCsv, fkJsonExport, fkCsvExport } from "../analysis/exports";
-import type { ExportArtifact, FkExportRequest } from "../analysis/exports";
+import { rawJsonExport, rawTraceCsv, currentFkExport } from "../analysis/exports";
+import type { ExportArtifact } from "../analysis/exports";
+import type { FkDownload } from "../analysis/fk-protocol";
 import { createTraceSeries, findNearestSourceFrame, clampFrameWindow } from "../analysis/series";
 import type { FrameWindow } from "../analysis/series";
 import { TracePlot } from "../charts/TracePlot";
@@ -24,6 +25,8 @@ import type { FKSettingsValue, FKProfileMetadata } from "./FKSettings";
 import { FKPanel } from "./FKPanel";
 import "./workspace.css";
 
+// allow: SIZE_OK — This existing episode state machine owns the coupled native/FK cursor,
+// focus and export lifecycle. Task 44 changes that boundary without splitting native views.
 type Result = NonNullable<Job["result"]>;
 type View = "overview" | "detail" | "chunks" | "metrics" | "fk";
 const views = [
@@ -45,7 +48,7 @@ export function initialWorkspaceSelection(jobId: string, episode: number, result
   };
 }
 
-function download(artifact: ExportArtifact) {
+function download(artifact: ExportArtifact | FkDownload) {
   const url = URL.createObjectURL(new Blob([artifact.content], { type: artifact.mediaType }));
   try {
     const link = document.createElement("a");
@@ -131,11 +134,12 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
         jobId: job.id, episode, actionNames: result.actionNames,
         jointMapping: layout.kind === "rby1" ? layout.channels.filter((channel) => channel.kind === "joint")
           .map((channel) => ({ jointName: channel.channelName, channelName: channel.channelName, sourceIndex: channel.sourceIndex })) : [],
+        frames: [],
+      });
+      if (admission.kind === "ready") owned.start({ ...admission.request,
         frames: trace?.frames.map((frame, index) => ({
           frame, predicted: trace.predicted[index] ?? [], target: trace.target[index] ?? [],
-        })) ?? [],
-      });
-      if (admission.kind === "ready") owned.start(admission.request);
+        })) ?? [] }, { sourceFrame: selection.sourceFrame, window: selection.window });
       else owned.invalidate(admission.reason);
     };
     void derive().catch((error: unknown) => {
@@ -143,6 +147,10 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
     });
     return () => { abort.abort(); owned.invalidate("FK source or declaration changed"); };
   }, [settings, job.id, episode, result.actionNames, trace, layout]);
+
+  useEffect(() => {
+    controller.current?.select({ sourceFrame: selection.sourceFrame, window: selection.window });
+  }, [selection.sourceFrame, selection.window]);
 
   useLayoutEffect(() => {
     if (view === "detail" && opener.current) closeButton.current?.focus();
@@ -170,17 +178,15 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
     && settings.enabled && fk.result.profileHash === settings.profileHash && fk.result.jointUnit === settings.jointUnit
     && settings.representation === "absolute_joint_position" && settings.nominalSignZeroConfirmed
     ? fk.result : null;
-  const exportRequest: FkExportRequest | null = completed && profile ? {
-    identity: completed, completed, context: { profile, sourceJobId: job.id, sourceEpisode: episode },
-  } : null;
-  function exportData(kind: "json" | "csv" | "fk-json" | "fk-csv") {
+  const canExport = completed !== null && profile !== null;
+  async function exportData(kind: "json" | "csv" | "fk-json" | "fk-csv") {
     setExportError("");
-    let artifact: ExportArtifact | null;
+    let artifact: ExportArtifact | FkDownload | null;
     switch (kind) {
       case "json": artifact = { filename: `vlaeval-${job.id}.json`, content: rawJsonExport(result), mediaType: "application/json;charset=utf-8" }; break;
       case "csv": artifact = { filename: `vlaeval-${job.id}.csv`, content: rawTraceCsv(result), mediaType: "text/csv;charset=utf-8" }; break;
-      case "fk-json": artifact = exportRequest ? fkJsonExport(exportRequest) : null; break;
-      case "fk-csv": artifact = exportRequest ? fkCsvExport(exportRequest) : null; break;
+      case "fk-json": artifact = canExport && controller.current ? await currentFkExport(controller.current, "json") : null; break;
+      case "fk-csv": artifact = canExport && controller.current ? await currentFkExport(controller.current, "csv") : null; break;
       default: { const exhaustive: never = kind; return exhaustive; }
     }
     if (!artifact) { setExportError("No matching completed FK result. Configure and complete this selection first."); return; }
@@ -235,11 +241,11 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
         controller.current?.invalidate("FK declaration changed");
         setSettings(next);
       }} notice={catalog.notice} loading={catalog.loading} />
-        <div className="cluster"><button data-export="fk-json" disabled={!exportRequest} onClick={() => exportData("fk-json")}>Derived FK JSON</button>
-          <button data-export="fk-csv" disabled={!exportRequest} onClick={() => exportData("fk-csv")}>Derived FK CSV</button></div>
-        <FKPanel state={completed ? { status: "ready", result: completed } : fk.status === "ready"
+        <div className="cluster"><button data-export="fk-json" disabled={!canExport} onClick={() => exportData("fk-json")}>Derived FK JSON</button>
+          <button data-export="fk-csv" disabled={!canExport} onClick={() => exportData("fk-csv")}>Derived FK CSV</button></div>
+        <FKPanel state={completed ? fk : fk.status === "ready"
           ? { status: "unavailable", reason: "No matching current FK selection" } : fk}
-          fps={result.fps} sourceFrame={selection.sourceFrame} window={selection.window} onFrameSelect={selectFrame} /></>;
+          frames={series.frames} fps={result.fps} sourceFrame={selection.sourceFrame} window={selection.window} onFrameSelect={selectFrame} /></>;
       break;
     default: { const exhaustive: never = view; return exhaustive; }
   }

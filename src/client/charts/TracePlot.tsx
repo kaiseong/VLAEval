@@ -3,6 +3,8 @@ import type { KeyboardEvent } from "react";
 import { sampleRenderGeometry } from "../analysis/render-sampling";
 import type { RenderSamplingInput, RenderSamplingResult } from "../analysis/render-sampling";
 import type { FrameWindow } from "../analysis/series";
+import { fkFrameIndex } from "../analysis/fk-view";
+import type { FkView } from "../analysis/fk-protocol";
 import "./plot.css";
 
 export type TracePlotSeries = RenderSamplingInput & { readonly fps: number };
@@ -22,6 +24,8 @@ export type TracePlotProps = {
   readonly wrapThreshold?: number;
   /** Optional geometry supplied by the owning workspace for this window. */
   readonly geometry?: RenderSamplingResult;
+  /** Validated bounded Worker view; series.frames is the existing native source index. */
+  readonly boundedView?: FkView["channels"][number];
 };
 
 type LayoutOptions = {
@@ -32,6 +36,7 @@ type LayoutOptions = {
   readonly height: number;
   readonly wrapThreshold?: number;
   readonly geometry?: RenderSamplingResult;
+  readonly boundedView?: FkView["channels"][number];
 };
 
 /** Display geometry only. Raw values and source IDs remain untouched. */
@@ -43,18 +48,17 @@ export function tracePlotGeometry(options: LayoutOptions) {
     || (yDomain && (!yDomain.every(Number.isFinite) || yDomain[0] > yDomain[1]))) {
     return { kind: "invalid", reason: "invalid_domain" } as const;
   }
-  if (series.frames.length !== series.predicted.length || series.frames.length !== series.target.length
+  if (!options.boundedView && (series.frames.length !== series.predicted.length || series.frames.length !== series.target.length
     || series.frames.some((frame, index) => !Number.isSafeInteger(frame) || frame < 0
-      || (index > 0 && frame <= (series.frames[index - 1] ?? -1)))) {
+      || (index > 0 && frame <= (series.frames[index - 1] ?? -1))))) {
     return { kind: "invalid", reason: "invalid_series" } as const;
   }
-  const first = series.frames.findIndex((frame) => frame >= window.startFrame);
-  const after = series.frames.findIndex((frame) => frame > window.endFrame);
-  const end = after < 0 ? series.frames.length : after;
+  const first = fkFrameIndex(series.frames, window.startFrame);
+  const end = fkFrameIndex(series.frames, Math.floor(window.endFrame) + 1);
   const visible = {
-    frames: first < 0 ? [] : series.frames.slice(first, end),
-    predicted: first < 0 ? [] : series.predicted.slice(first, end),
-    target: first < 0 ? [] : series.target.slice(first, end),
+    frames: first === 0 && end === series.frames.length ? series.frames : series.frames.slice(first, end),
+    predicted: options.boundedView ? [] : series.predicted.slice(first, end),
+    target: options.boundedView ? [] : series.target.slice(first, end),
   };
   // Reserve readable space for bounded scientific ticks, including narrow plots.
   const left = 88;
@@ -62,7 +66,7 @@ export function tracePlotGeometry(options: LayoutOptions) {
   // Keep the unit caption above the top tick at the readable overview font size.
   const top = 48;
   const bottom = height - 60;
-  const sampled = options.geometry ?? sampleRenderGeometry(visible, {
+  const sampled = options.boundedView?.geometry ?? options.geometry ?? sampleRenderGeometry(visible, {
     pixelWidth: Math.max(1, Math.floor(right - left)),
     ...(options.wrapThreshold === undefined ? {} : { wrapThreshold: options.wrapThreshold }),
   });
@@ -86,6 +90,7 @@ export function tracePlotGeometry(options: LayoutOptions) {
           }
         }
       }
+      if (options.boundedView?.domain) [min, max] = options.boundedView.domain;
       if (!Number.isFinite(min)) return { kind: "empty" } as const;
       if (yDomain) [min, max] = yDomain;
       const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
@@ -145,10 +150,12 @@ export function TracePlot(props: TracePlotProps) {
     series, window, yDomain, width, height,
     ...(props.wrapThreshold === undefined ? {} : { wrapThreshold: props.wrapThreshold }),
     ...(props.geometry === undefined ? {} : { geometry: props.geometry }),
-  }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry]);
+    ...(props.boundedView === undefined ? {} : { boundedView: props.boundedView }),
+  }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry, props.boundedView]);
   const frames = layout.kind === "ready" ? layout.visible.frames : [];
-  const index = sourceFrame === null ? -1 : frames.indexOf(sourceFrame);
-  const rawIndex = sourceFrame === null ? -1 : series.frames.indexOf(sourceFrame);
+  const position = sourceFrame === null ? -1 : fkFrameIndex(frames, sourceFrame);
+  const index = frames[position] === sourceFrame ? position : -1;
+  const rawIndex = sourceFrame === null ? -1 : fkFrameIndex(series.frames, sourceFrame);
   const selected = index >= 0 && sourceFrame !== null;
   const selectKey = (event: KeyboardEvent<SVGSVGElement>) => {
     let next: number;

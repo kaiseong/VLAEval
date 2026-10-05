@@ -1,6 +1,8 @@
 import { resultSchema } from "../../contracts";
 import { fkResultSchema } from "../../kinematics/contracts";
 import type { FkResult } from "../../kinematics/contracts";
+import type { FkController } from "./fk-controller";
+import { sameFkIdentity, type FkDownload } from "./fk-protocol";
 
 type Result = typeof resultSchema._output;
 type FkIdentity = Pick<FkResult, "schemaVersion" | "jobId" | "episode" | "profileHash" | "jointUnit" | "representation" | "convention" | "generation">;
@@ -25,6 +27,13 @@ export type FkExportRequest = {
 };
 
 export type ExportArtifact = { readonly filename: string; readonly content: string; readonly mediaType: string };
+
+/** Recheck ownership after await; an invalidated generation cannot download a queued Blob. */
+export async function currentFkExport(controller: FkController, format: "json" | "csv"): Promise<FkDownload | null> {
+  const artifact = await controller.export(format);
+  const current = controller.exportResult;
+  return artifact && current && sameFkIdentity(artifact.identity, current) ? artifact : null;
+}
 
 export function rawJsonExport(result: Result): string {
   return JSON.stringify(result, null, 2);

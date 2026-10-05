@@ -174,7 +174,22 @@ export async function runScenario({ args, outputPath, startHarness }) {
 
     // Instrument actual Blob creation without substituting bytes or download behavior.
     await page.evaluate(`(()=>{const create=URL.createObjectURL.bind(URL);window.__task17Blobs=[];URL.createObjectURL=blob=>{
-      window.__task17Blobs.push({type:blob.type,promise:blob.text(),bytes:blob.arrayBuffer().then(b=>Array.from(new Uint8Array(b)))});return create(blob)};return true})()`);
+      window.__task17Blobs.push({type:blob.type,promise:blob.text(),bytes:blob.arrayBuffer().then(b=>Array.from(new Uint8Array(b)))});
+      window.dispatchEvent(new CustomEvent('task17-blob',{detail:window.__task17Blobs.length-1}));
+      return create(blob)};return true})()`);
+    async function captureDerived(selector) {
+      await page.evaluate(`(()=>{
+        window.__task17BlobSignal=new Promise((resolve,reject)=>{
+          let timer;
+          const captured=event=>{clearTimeout(timer);window.removeEventListener('task17-blob',captured);resolve(event.detail)};
+          window.addEventListener('task17-blob',captured,{once:true});
+          timer=setTimeout(()=>{window.removeEventListener('task17-blob',captured);reject(new Error('Actual derived Blob capture deadline'))},10000);
+        });return true;
+      })()`);
+      await click(selector);
+      const index = await page.evaluate("window.__task17BlobSignal");
+      return page.evaluate(`window.__task17Blobs[${index}].promise`);
+    }
     await click('[data-export="json"]');
     const json = await page.evaluate("window.__task17Blobs.at(-1).promise");
     checkValue("production-raw-json-preserves-source", JSON.stringify(JSON.parse(json)) === JSON.stringify(first.result));
@@ -253,13 +268,11 @@ export async function runScenario({ args, outputPath, startHarness }) {
       await click("[data-fk-confirm]"); await settled();
       await check("FK-shares-original-source-frame-window", "(()=>{const w=document.querySelector('.result-workspace');return [...document.querySelectorAll('[data-fk-channel] .trace-plot')].every(s=>s.dataset.sourceFrame===w.dataset.sourceFrame&&s.dataset.windowStart===w.dataset.windowStart&&s.dataset.windowEnd===w.dataset.windowEnd)})()");
       await shot("fk-ready-top"); await shot("fk-ready-end", true);
-      await click('[data-export="fk-json"]');
-      const derivedJson = JSON.parse(await page.evaluate("window.__task17Blobs.at(-1).promise"));
+      const derivedJson = JSON.parse(await captureDerived('[data-export="fk-json"]'));
       checkValue("actual-derived-export-matches-source-and-declaration", derivedJson.source.jobId === first.id
         && derivedJson.source.episode === originalTrace.episode && derivedJson.source.frames.join() === originalTrace.frames.join()
         && derivedJson.declaration.jointUnit === "rad" && derivedJson.profile.rootLink === "link_torso_5", derivedJson.source);
-      await click('[data-export="fk-csv"]');
-      const derivedCsv = await page.evaluate("window.__task17Blobs.at(-1).promise");
+      const derivedCsv = await captureDerived('[data-export="fk-csv"]');
       checkValue("actual-derived-csv-separate-from-native", derivedCsv.includes("translation_error_m") && derivedCsv.includes(first.id) && !derivedCsv.startsWith("episode,frame,"));
       await arm("document.querySelectorAll('[data-fk-channel]').length===0 && document.querySelector('[data-export=\"fk-json\"]').disabled");
       await choose("[data-fk-representation]", 2, "document.querySelector('[data-fk-representation]').value==='delta'");
@@ -271,13 +284,38 @@ export async function runScenario({ args, outputPath, startHarness }) {
       await page.evaluate(`(()=>{
         const NativeWorker=window.Worker;window.__task17Held=[];
         window.Worker=class extends NativeWorker {
-          set onmessage(callback) { super.onmessage=event=>{
-            if(callback){window.__task17Held.push({callback,event});document.dispatchEvent(new Event('task17-held-worker'))}
+          set onmessage(callback) { super.onmessage=async event=>{
+            if(!callback)return;
+            if(event.data.kind!=='view'||event.data.serial!==0){callback(event);return}
+            try {
+              const serial=900000;
+              const exported=await new Promise((resolve,reject)=>{
+                let timer;
+                const receive=reply=>{
+                  if(reply.data.kind!=='export'||reply.data.serial!==serial)return;
+                  this.removeEventListener('message',receive);clearTimeout(timer);
+                  if(JSON.stringify(reply.data.identity)!==JSON.stringify(event.data.identity))
+                    return reject(new Error('Held Worker export identity mismatch'));
+                  resolve(reply.data.content.text().then(JSON.parse));
+                };
+                this.addEventListener('message',receive);
+                timer=setTimeout(()=>{this.removeEventListener('message',receive);reject(new Error('Held Worker full export deadline'))},10000);
+                this.postMessage({kind:'export',identity:event.data.identity,serial,format:'json'});
+              });
+              window.__task17Held.push({callback,event,exported});
+              document.dispatchEvent(new Event('task17-held-worker'));
+            } catch(error) {
+              window.__task17HeldError=String(error);
+              document.dispatchEvent(new Event('task17-held-worker'));
+            }
           }; }
         };
         window.__task17HeldPromise=new Promise((resolve,reject)=>{
           const timer=setTimeout(()=>{document.removeEventListener('task17-held-worker',ready);reject(new Error('Real held Worker completion timed out'))},10000);
-          function ready(){clearTimeout(timer);document.removeEventListener('task17-held-worker',ready);resolve(true)}
+          function ready(){
+            clearTimeout(timer);document.removeEventListener('task17-held-worker',ready);
+            if(window.__task17HeldError)reject(new Error(window.__task17HeldError));else resolve(true);
+          }
           document.addEventListener('task17-held-worker',ready);
         });return true})()`);
       await choose("[data-fk-representation]", 1, "document.querySelector('[data-fk-representation]').value==='absolute_joint_position'");
@@ -288,9 +326,17 @@ export async function runScenario({ args, outputPath, startHarness }) {
     await choose("#workspace-episode", 1, "document.querySelector('.result-workspace').dataset.episode==='4'");
     await check("episode-switch-atomically-resets-view-cursor-window", `(()=>{const w=document.querySelector('.result-workspace');return w.dataset.view==='overview'&&w.dataset.sourceFrame==='${originalTrace.frames[0]+30}'&&w.dataset.windowStart==='${originalTrace.frames[0]+30}'&&w.dataset.windowEnd==='${originalTrace.frames.at(-1)+30}'})()`);
     if (count === 16) {
-      const held = await read("window.__task17Held.map(item=>({jobId:item.event.data.jobId,episode:item.event.data.episode,generation:item.event.data.generation,frames:item.event.data.samples.map(s=>s.frame)}))");
+      const held = await read(`window.__task17Held.map(({event,exported})=>{
+        const result=JSON.parse(event.data.payload).result;
+        return {jobId:result.jobId,episode:result.episode,generation:result.generation,frameCount:result.frameCount,
+          frames:exported.source.frames,sampleFrames:exported.samples.map(sample=>sample.frame),
+          exportJobId:exported.source.jobId,exportEpisode:exported.source.episode,exportGeneration:exported.declaration.generation};
+      })`);
       checkValue("stale-state-is-real-production-worker-source", held.length === 1 && held[0].jobId === first.id
-        && held[0].episode === originalTrace.episode && held[0].frames.join() === originalTrace.frames.join(), held);
+        && held[0].episode === originalTrace.episode && held[0].frames.join() === originalTrace.frames.join()
+        && held[0].frameCount === originalTrace.frames.length && held[0].sampleFrames.join() === originalTrace.frames.join()
+        && held[0].exportJobId === first.id && held[0].exportEpisode === originalTrace.episode
+        && held[0].exportGeneration === held[0].generation, held);
       await page.evaluate("window.__task17Held.splice(0).forEach(({callback,event})=>callback(event))");
       await page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
       await check("late-old-worker-cannot-revive-episode-state", "document.querySelector('.result-workspace').dataset.episode==='4' && document.querySelectorAll('[data-fk-channel]').length===0");

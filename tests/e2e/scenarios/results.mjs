@@ -473,9 +473,31 @@ async function actualAppWorkerRace({ outputPath, startHarness }) {
       window.Worker=class extends NativeWorker {
         set onmessage(callback) {
           if(callback===null){super.onmessage=null;return}
-          super.onmessage=event=>{
-            window.__task21HeldWorkers.push({callback,event});
-            document.dispatchEvent(new Event("task21-worker-held"));
+          super.onmessage=async event=>{
+            if(event.data.kind!=="view"||event.data.serial!==0){callback(event);return}
+            try {
+              // Inspect the actual full encoded export without admitting a full result
+              // into the product controller. Count/bounds alone cannot prove middle IDs.
+              const serial=900000+window.__task21HeldWorkers.length;
+              const exported=await new Promise((resolve,reject)=>{
+                let timer;
+                const receive=reply=>{
+                  if(reply.data.kind!=="export"||reply.data.serial!==serial)return;
+                  this.removeEventListener("message",receive);clearTimeout(timer);
+                  if(JSON.stringify(reply.data.identity)!==JSON.stringify(event.data.identity))
+                    return reject(new Error("Held generation export identity mismatch"));
+                  resolve(reply.data.content.text().then(JSON.parse));
+                };
+                this.addEventListener("message",receive);
+                timer=setTimeout(()=>{this.removeEventListener("message",receive);reject(new Error("Held generation export deadline"))},${timeoutMs});
+                this.postMessage({kind:"export",identity:event.data.identity,serial,format:"json"});
+              });
+              window.__task21HeldWorkers.push({callback,event,exported});
+              document.dispatchEvent(new Event("task21-worker-held"));
+            } catch(error) {
+              window.__task21HeldError=String(error);
+              document.dispatchEvent(new Event("task21-worker-held"));
+            }
           };
         }
       };
@@ -483,6 +505,9 @@ async function actualAppWorkerRace({ outputPath, startHarness }) {
         window.__task21HeldSignal=new Promise((resolve,reject)=>{
           let timer;
           const check=()=>{
+            if(window.__task21HeldError){
+              document.removeEventListener("task21-worker-held",check);clearTimeout(timer);reject(new Error(window.__task21HeldError));return;
+            }
             if(window.__task21HeldWorkers.length<count)return;
             document.removeEventListener("task21-worker-held",check);clearTimeout(timer);resolve(true);
           };
@@ -516,13 +541,22 @@ async function actualAppWorkerRace({ outputPath, startHarness }) {
       await page.evaluate(`window.__task21ArmHeld(${nextCount})`);
       await click(page, "[data-fk-confirm]", actions);
       await page.evaluate("window.__task21HeldSignal");
-      const held = await read(page, `window.__task21HeldWorkers.map(({event})=>({
-        jobId:event.data.jobId,episode:event.data.episode,generation:event.data.generation,
-        profileHash:event.data.profileHash,frames:event.data.samples.map(sample=>sample.frame)
-      }))`);
+      const held = await read(page, `window.__task21HeldWorkers.map(({event,exported})=>{
+        const result=JSON.parse(event.data.payload).result;
+        return {jobId:result.jobId,episode:result.episode,generation:result.generation,
+          profileHash:result.profileHash,frameCount:result.frameCount,firstFrame:result.firstFrame,lastFrame:result.lastFrame,
+          frames:exported.source.frames,exportJobId:exported.source.jobId,exportEpisode:exported.source.episode,
+          exportGeneration:exported.declaration.generation,
+          sampleFrames:exported.samples.map(sample=>sample.frame)};
+      })`);
       const selected = held.at(-1);
       addAssertion(assertions, `actual-App-held-worker-${nextCount}-matches-selected-run-and-frames`,
-        selected.jobId === targetJobId && selected.episode === 3 && selected.frames.join() === expectedFrames.join(), selected);
+        selected.jobId === targetJobId && selected.episode === 3 && selected.frameCount === expectedFrames.length
+          && selected.firstFrame === expectedFrames[0] && selected.lastFrame === expectedFrames.at(-1)
+          && selected.frames.join() === expectedFrames.join() && selected.sampleFrames.join() === expectedFrames.join()
+          && selected.exportJobId === targetJobId && selected.exportEpisode === 3
+          && selected.exportGeneration === selected.generation,
+        { ...selected, fullFrameIdentityProvedByActualHeldGenerationExport: true });
       addAssertion(assertions, `actual-App-held-worker-${nextCount}-not-yet-published`,
         await read(page, "document.querySelectorAll('[data-fk-channel]').length===0 && document.querySelector('[data-export=\"fk-json\"]').disabled"), held);
       return selected;
@@ -573,10 +607,14 @@ async function actualAppWorkerRace({ outputPath, startHarness }) {
     actions.push({ action: "release-current-B-before-stale-A", order: [heldB, heldA], afterA });
     await page.evaluate(`(()=>{
       const create=URL.createObjectURL.bind(URL);window.__task21FkExports=[];
-      URL.createObjectURL=blob=>{window.__task21FkExports.push({type:blob.type,text:blob.text()});return create(blob)};
+      window.__task21ExportSignal=new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>{URL.createObjectURL=create;reject(new Error('Actual task21 export Blob capture timed out'))},${timeoutMs});
+        URL.createObjectURL=blob=>{clearTimeout(timer);URL.createObjectURL=create;window.__task21FkExports.push({type:blob.type,text:blob.text()});resolve(true);return create(blob)};
+      });
       return true;
     })()`);
     await click(page, '[data-export="fk-json"]', actions);
+    await page.evaluate("window.__task21ExportSignal");
     const exported = JSON.parse(await page.evaluate("window.__task21FkExports.at(-1).text"));
     addAssertion(assertions, "actual-App-FK-export-after-stale-A-keeps-current-B-identity-and-frames",
       exported.source.jobId === second.id && exported.source.episode === 3

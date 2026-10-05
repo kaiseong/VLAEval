@@ -6,6 +6,7 @@ import { FKPanel, fkPoseSeries } from "../../src/client/results/FKPanel";
 import { deriveForward } from "../../src/kinematics/forward";
 import { fkRequestSchema } from "../../src/kinematics/contracts";
 import { tracePlotGeometry } from "../../src/client/charts/TracePlot";
+import { buildFkView } from "../../src/client/analysis/fk-view";
 const fixtureModule = "../fixtures/redesign/index.mjs";
 const { fixtureSnapshot } = await import(fixtureModule);
 const request = fkRequestSchema.parse(fixtureSnapshot("fk-certified").fkRequest);
@@ -57,7 +58,12 @@ test("twelve pose channels convert display only and preserve singular components
 
 test("pose panel keeps separate units counts and shared frame window", () => {
   const result = deriveForward(request);
-  const html = renderToStaticMarkup(createElement(FKPanel, { state: { status: "ready", result }, fps: 30,
+  const { samples, ...metadata } = result;
+  const selection = { sourceFrame: 1, window: { startFrame: 1, endFrame: 2 } };
+  const html = renderToStaticMarkup(createElement(FKPanel, { state: { status: "ready",
+    result: { ...metadata, frameCount: samples.length, firstFrame: 0, lastFrame: 2 },
+    view: buildFkView(fkPoseSeries(result, 30), selection), selected: samples[1] ?? null },
+    frames: samples.map((sample) => sample.frame), fps: 30,
     sourceFrame: 1, window: { startFrame: 1, endFrame: 2 }, onFrameSelect: () => {} }));
   expect(html.match(/data-fk-channel=/g)).toHaveLength(12);
   expect(html.match(/data-fk-error="translationM"/g)).toHaveLength(2);
@@ -82,7 +88,7 @@ test("wraps and nullable yaw remain gaps while valid position remains plotted", 
 
 test("pending and unavailable states have no stale pose channels", () => {
   for (const state of [{ status: "pending", generation: 2 }, { status: "unavailable", reason: "profile mismatch" }] as const) {
-    const html = renderToStaticMarkup(createElement(FKPanel, { state, fps: 30, sourceFrame: 1,
+    const html = renderToStaticMarkup(createElement(FKPanel, { state, frames: request.frames.map((sample) => sample.frame), fps: 30, sourceFrame: 1,
       window: { startFrame: 0, endFrame: 2 }, onFrameSelect: () => {} }));
     expect(html).not.toContain("data-fk-channel");
     expect(html).toContain('role="status"');

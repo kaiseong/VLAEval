@@ -3,6 +3,10 @@ import { FkController, type FkWorker } from "../../src/client/analysis/fk-contro
 import { fkRequestSchema, type FkRequest, type FkResult, type CompiledProfile } from "../../src/kinematics/contracts";
 import { deriveForward } from "../../src/kinematics/forward";
 import { buildFkWorkerAsset } from "../../src/kinematics/worker-asset";
+import { fkIdentitySchema } from "../../src/kinematics/contracts";
+import { unpackFkRequest, type FkCommand, type FkSelection } from "../../src/client/analysis/fk-protocol";
+import { buildFkView, fkPoseSeries } from "../../src/client/analysis/fk-view";
+import { fkJsonExport, fkCsvExport } from "../../src/client/analysis/exports";
 
 function fixture(): FkRequest {
   const chain = (side: "right" | "left"): CompiledProfile["rightChain"] => [
@@ -40,17 +44,46 @@ class DeferredWorker implements FkWorker {
   onerror: FkWorker["onerror"] = null;
   onmessageerror: FkWorker["onmessageerror"] = null;
   request: FkRequest | null = null;
+  selection: FkSelection | null = null;
   terminated = false;
-  postMessage(request: FkRequest): void { this.request = request; }
+  postMessage(input: FkCommand, transfer: Transferable[] = []): void {
+    const command = structuredClone(input, { transfer });
+    switch (command.kind) {
+      case "derive": this.request = unpackFkRequest(command); this.selection = command.selection; break;
+      case "export": {
+        if (!this.request) throw new Error("Missing source");
+        const input = { identity: command.identity, completed: this.result(),
+          context: { profile: this.request.profile, sourceJobId: this.request.jobId, sourceEpisode: this.request.episode } };
+        const artifact = command.format === "json" ? fkJsonExport(input) : fkCsvExport(input);
+        if (!artifact) throw new Error("Missing export");
+        this.onmessage?.(new MessageEvent("message", { data: structuredClone({ ...artifact,
+          kind: "export", identity: command.identity, serial: command.serial, format: command.format,
+          content: new Blob([artifact.content], { type: artifact.mediaType }) }) }));
+        break;
+      }
+      case "view":
+      case "point": throw new Error("Unexpected query in lifecycle fixture");
+      default: { const exhaustive: never = command; throw exhaustive; }
+    }
+  }
   terminate(): void { this.terminated = true; }
   result(): FkResult {
     if (this.request === null) throw new Error("No posted request");
     return deriveForward(this.request);
   }
+  reply(result = this.result()) {
+    if (!this.selection) throw new Error("Missing selection");
+    const { samples, ...metadata } = result;
+    return { kind: "view", identity: fkIdentitySchema.parse(result), serial: 0,
+      payload: JSON.stringify({ result: { ...metadata, frameCount: samples.length,
+        firstFrame: samples[0]?.frame ?? null, lastFrame: samples.at(-1)?.frame ?? null },
+      view: buildFkView(fkPoseSeries(result, 30), this.selection),
+      selected: samples.find((sample) => sample.frame === this.selection?.sourceFrame) ?? null }) };
+  }
   delivery() {
     const handler = this.onmessage;
     const signal = Promise.withResolvers<unknown>();
-    const delivered = signal.promise.then((data) => handler?.(new MessageEvent("message", { data })));
+    const delivered = signal.promise.then((data) => handler?.(new MessageEvent("message", { data: structuredClone(data) })));
     return { release: signal.resolve, delivered };
   }
 }
@@ -73,31 +106,34 @@ test("keeps B when held A completes after same-job same-episode replacement", as
     expect(a.terminated).toBe(true);
     expect([a.onmessage, a.onerror, a.onmessageerror]).toEqual([null, null, null]);
     // When B finishes before the already queued A callback is released.
-    finishB.release(b.result());
+    finishB.release(b.reply());
     await finishB.delivered;
     const completedB = controller.exportResult;
-    heldA.release(a.result());
+    heldA.release(a.reply());
     await heldA.delivered;
     // Then only the exact B identity and all original frames remain exportable.
     expect(controller.exportResult).toBe(completedB);
     expect(completedB?.jointUnit).toBe("deg");
     expect(completedB?.generation).not.toBe(a.request?.generation);
-    expect(completedB?.samples.map((sample) => sample.frame)).toEqual([0, 3, 9]);
-    expect(b.terminated).toBe(true);
+    expect(completedB?.frameCount).toBe(3);
+    const exported = await controller.export("json");
+    expect(JSON.parse(await exported?.content.text() ?? "null").source.frames).toEqual([0, 3, 9]);
+    // The live generation now owns exact point queries and full exports until invalidated.
+    expect(b.terminated).toBe(false);
   } finally { controller.dispose(); }
 });
 
 for (const mismatch of [
   { jobId: "00000000-0000-4000-8000-000000000006" }, { episode: 5 },
   { profileHash: "c".repeat(64) }, { jointUnit: "deg" }, { generation: 12 },
-]) test(`ignores a completion with mismatched ${Object.keys(mismatch)[0]}`, async () => {
+] as const) test(`ignores a completion with mismatched ${Object.keys(mismatch)[0]}`, async () => {
   // Given a pending selected derivation and a registered delivery.
   const worker = new DeferredWorker(), controller = new FkController(() => {}, () => worker);
   try {
     controller.start(fixture());
     const event = worker.delivery();
     // When a valid but unrelated identity arrives.
-    event.release({ ...worker.result(), ...mismatch });
+    event.release(worker.reply({ ...worker.result(), ...mismatch }));
     await event.delivered;
     // Then no derived export is available.
     expect(controller.state.status).toBe("pending");
@@ -110,8 +146,8 @@ for (const event of ["error", "messageerror", "invalidate", "dispose"] as const)
     // Given a completed result followed by a fresh pending selection.
     const worker = new DeferredWorker(), controller = new FkController(() => {}, () => worker);
     controller.start(fixture());
-    worker.onmessage?.(new MessageEvent("message", { data: worker.result() }));
-    expect(controller.exportResult?.samples.length).toBe(3);
+    worker.onmessage?.(new MessageEvent("message", { data: worker.reply() }));
+    expect(controller.exportResult?.frameCount).toBe(3);
     controller.start(fixture());
     expect(controller.exportResult).toBeNull();
     // When computation fails or its owner terminates it.
@@ -138,7 +174,7 @@ test("rejects malformed result and incomplete source arrays without stale export
     controller.start(fixture());
     const result = worker.result();
     // When a result silently drops a source frame.
-    worker.onmessage?.(new MessageEvent("message", { data: { ...result, samples: result.samples.slice(1) } }));
+    worker.onmessage?.(new MessageEvent("message", { data: worker.reply({ ...result, samples: result.samples.slice(1) }) }));
     // Then it is unavailable instead of exporting partial data.
     expect(controller.state.status).toBe("unavailable");
     expect(controller.exportResult).toBeNull();
@@ -149,7 +185,7 @@ test("invalidates a ready export before rejecting invalid new source admission",
   // Given a completed, exportable derivation.
   const worker = new DeferredWorker(), controller = new FkController(() => {}, () => worker);
   controller.start(fixture());
-  worker.onmessage?.(new MessageEvent("message", { data: worker.result() }));
+  worker.onmessage?.(new MessageEvent("message", { data: worker.reply() }));
   expect(controller.exportResult).not.toBeNull();
   // When the selected profile no longer matches its digest.
   controller.start({ ...fixture(), profileHash: "c".repeat(64) });
