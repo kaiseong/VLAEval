@@ -1,0 +1,39 @@
+.trace-plot {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: var(--body);
+  font-variant-numeric: tabular-nums;
+}
+.trace-plot figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s1) var(--s2);
+  align-items: baseline;
+}
+.trace-plot figcaption strong { overflow-wrap: anywhere; }
+.trace-plot figcaption > span { color: var(--muted); }
+.trace-plot svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+  touch-action: pan-y;
+}
+.trace-plot svg[role="slider"] { cursor: crosshair; }
+.trace-plot svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-small); }
+.trace-plot svg text { fill: var(--muted); font: var(--caption) system-ui, sans-serif; }
+.trace-plot__grid { stroke: var(--line); stroke-width: 1; }
+.trace-plot__predicted { stroke: var(--accent); fill: var(--accent); }
+.trace-plot__target { stroke: var(--target); fill: var(--target); }
+.trace-plot__predicted path, .trace-plot__target path { stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.trace-plot__target path { stroke-dasharray: 6 4; }
+.trace-plot__cursor { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 3; }
+.trace-plot__band { fill: var(--secondary); }
+.trace-plot__legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); margin-block: var(--s2); color: var(--muted); }
+.trace-plot__legend span { display: inline-flex; align-items: center; gap: var(--s2); }
+.trace-plot__legend i { display: inline-block; width: 20px; border-top: 2px solid var(--accent); }
+.trace-plot__legend span:last-child i { border-top: 2px dashed var(--target); }
+.trace-plot__inspection, .trace-plot__notice { color: var(--muted); font-size: var(--caption); overflow-wrap: anywhere; }
+.trace-plot--compact .trace-plot__inspection { margin-top: var(--s1); }
