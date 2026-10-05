@@ -1,0 +1,52 @@
+.result-workspace { min-width: 0; display: grid; gap: var(--s2); }
+.result-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s4); }
+.result-toolbar > div:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.result-toolbar h2 { font-size: var(--section); }
+.result-toolbar p { font-size: var(--caption); color: var(--muted); }
+.result-toolbar .field { min-width: 0; }
+.result-toolbar .cluster { gap: var(--s2); }
+.result-scores { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: 0; padding: var(--s2) var(--s3); background: var(--secondary); border-radius: var(--radius); font-variant-numeric: tabular-nums; }
+.result-scores > div { display: flex; gap: var(--s2); align-items: baseline; }
+.result-scores dt { font-size: var(--caption); color: var(--muted); }
+.result-scores dd { margin: 0; font-weight: 650; }
+.result-tabs { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.result-navigation { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--s2); }
+.workspace-cursor { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s2); }
+.workspace-cursor .field { width: calc(var(--s8) * 4); min-width: 0; gap: var(--s1); }
+.workspace-cursor output { padding-block: var(--s3); color: var(--muted); overflow-wrap: anywhere; }
+.result-content { min-width: 0; }
+.result-content > [data-close-detail] { margin-bottom: var(--s2); }
+.result-content .panel { padding: var(--s4); }
+.result-provenance { font-size: var(--caption); overflow-wrap: anywhere; }
+.result-provenance summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--muted); }
+.result-provenance dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: var(--s2); }
+.result-provenance dd { margin: 0; min-width: 0; }
+@media (min-width: 1101px) {
+  .result-toolbar .field, .workspace-cursor .field { flex-direction: row; align-items: center; gap: var(--s2); }
+  .result-toolbar .field select { width: calc(var(--s8) * 3); }
+  .workspace-cursor { flex: 1; min-width: 0; }
+  .workspace-cursor .field { width: auto; }
+  .workspace-cursor input { max-width: calc(var(--s8) * 3); }
+  .workspace-cursor output { padding: 0; flex-basis: 100%; }
+  .result-workspace .overview__heading > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); }
+  .result-workspace .overview__heading { gap: var(--s1); margin-bottom: var(--s2); }
+  .result-workspace .overview-panel { padding: var(--s1); }
+  /* Compact the SVG viewport, not its aspect-ratio allocation. ResizeObserver
+     measures the unzoomed width so ticks retain the full physical panel width. */
+  .result-workspace .overview-panel .trace-plot svg { height: calc(var(--s8) * 5); zoom: calc(3 / 5); }
+  .result-workspace .overview-panel .trace-plot svg text { font-size: calc(var(--caption) * 5 / 3); }
+}
+@media (max-width: 760px) {
+  .result-toolbar > div:first-child { flex-basis: 100%; }
+  .result-toolbar > .field { flex: 1 1 100%; flex-direction: row; align-items: center; }
+  .result-toolbar > .field > span { flex-shrink: 0; white-space: nowrap; }
+  .result-toolbar > .field select { flex: 1; }
+  .result-toolbar > .cluster { width: 100%; }
+  .result-toolbar > .cluster button { flex: 1; }
+  .result-scores { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+  .result-scores > div { flex-wrap: wrap; gap: var(--s1); }
+  .workspace-cursor .field { flex: 1; width: auto; }
+  .workspace-cursor output { flex-basis: 100%; padding: 0; }
+  .result-content > .field { max-width: 100%; }
+  .result-provenance dl { grid-template-columns: minmax(0, 1fr); }
+}
