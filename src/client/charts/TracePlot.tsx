@@ -163,8 +163,9 @@ export function TracePlot(props: TracePlotProps) {
       onKeyDown={selectKey} onClick={(event) => {
         if (layout.kind !== "ready" || !frames.length) return;
         event.currentTarget.focus();
-        const rect = event.currentTarget.getBoundingClientRect();
-        const localX = (event.clientX - rect.left) * width / rect.width;
+        const matrix = event.currentTarget.getScreenCTM();
+        if (!matrix) return;
+        const localX = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse()).x;
         const fraction = Math.max(0, Math.min(1, (localX - layout.left) / (layout.right - layout.left)));
         const desired = window.startFrame + fraction * (window.endFrame - window.startFrame);
         // Source frames, not retained vertices or row ordinals; ties select earlier.
