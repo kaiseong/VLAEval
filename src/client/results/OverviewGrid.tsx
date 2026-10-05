@@ -60,7 +60,7 @@ export function OverviewGrid(props: OverviewGridProps) {
   }
   return <section className="overview" aria-label="Action overview" data-layout={layout.kind}>
     <header className="overview__heading">
-      <div><h2>Action overview</h2><p>First-step · full episode · native / unknown units</p>
+      <div><h2>Action overview</h2><p>First-step · complete scored trace · native / unknown units</p>
         <p className="overview__cursor">{props.sourceFrame === null ? "No frame selected"
           : `Frame ${props.sourceFrame} · ${number(props.sourceFrame / props.series.fps)} s`}
           {props.sourceFrame !== null && (props.sourceFrame < props.window.startFrame || props.sourceFrame > props.window.endFrame)

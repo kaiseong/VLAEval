@@ -1,4 +1,4 @@
-.result-workspace { min-width: 0; display: grid; gap: var(--s2); }
+.result-workspace { min-width: 0; display: grid; gap: var(--s1); }
 .result-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s4); }
 .result-toolbar > div:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .result-toolbar h2 { font-size: var(--section); }
@@ -9,6 +9,9 @@
 .result-scores > div { display: flex; gap: var(--s2); align-items: baseline; }
 .result-scores dt { font-size: var(--caption); color: var(--muted); }
 .result-scores dd { margin: 0; font-weight: 650; }
+.coverage-summary { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); min-width: 0; font-size: var(--caption); line-height: 1.4; }
+.coverage-summary__scope, .coverage-summary__subset { min-width: 0; overflow-wrap: anywhere; }
+.coverage-summary__subset { color: var(--muted); }
 .result-tabs { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .result-navigation { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--s2); }
 .workspace-cursor { display: flex; flex-wrap: wrap; align-items: end; gap: var(--s2); }

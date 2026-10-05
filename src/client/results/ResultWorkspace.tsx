@@ -18,6 +18,7 @@ import { OverviewGrid } from "./OverviewGrid";
 import { DetailPanel } from "./DetailPanel";
 import { ChunkPanel } from "./ChunkPanel";
 import { MetricTables } from "./MetricTables";
+import { CoverageSummary } from "./CoverageSummary";
 import { FKSettings, declaredFKRequest, initialFKSettings } from "./FKSettings";
 import type { FKSettingsValue, FKProfileMetadata } from "./FKSettings";
 import { FKPanel } from "./FKPanel";
@@ -257,6 +258,7 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
       <div className="cluster"><button data-export="json" onClick={() => exportData("json")}><FileJson size={16} aria-hidden="true" />결과 JSON</button>
         <button data-export="csv" disabled={!result.traces.length} onClick={() => exportData("csv")}><Download size={16} aria-hidden="true" />전체 trace CSV</button></div>
     </header>
+    <CoverageSummary result={result} request={job.request} episode={episode} frames={trace?.frames ?? []} />
     {job.error && <p role="alert" className="notice error">{job.error}</p>}
     {exportError && <p role="alert" className="notice error">{exportError}</p>}
     <dl className="result-scores">
