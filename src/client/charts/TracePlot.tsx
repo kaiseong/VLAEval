@@ -115,9 +115,10 @@ const displayValue = (value: number | null | undefined) => typeof value === "num
   : "unavailable";
 
 /** Axis presentation only; raw inspection retains its separate precision. */
-const axisValue = (value: number) => {
-  const decimal = value.toLocaleString("en-US", { maximumSignificantDigits: 3, useGrouping: false });
-  return decimal.length <= 6 ? decimal : value.toExponential(1).replace("e+", "e");
+const axisValue = (value: number, significantDigits: number) => {
+  const decimal = value.toLocaleString("en-US", { maximumSignificantDigits: significantDigits, useGrouping: false });
+  return decimal.length <= (significantDigits > 3 ? 9 : 6)
+    ? decimal : value.toExponential(significantDigits > 3 ? significantDigits - 1 : 1).replace("e+", "e");
 };
 
 /** Absolute time needs precision relative to the visible tick interval, not zero. */
@@ -152,6 +153,22 @@ export function TracePlot(props: TracePlotProps) {
     ...(props.geometry === undefined ? {} : { geometry: props.geometry }),
     ...(props.boundedView === undefined ? {} : { boundedView: props.boundedView }),
   }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry, props.boundedView]);
+  // Use the displayed interval (including Worker-supplied domains), not source rows.
+  // Normalized subtraction avoids overflow for opposite extreme endpoints.
+  const yScale = layout.kind === "ready" ? Math.max(Math.abs(layout.min), Math.abs(layout.max)) || 1 : 1;
+  const yInterval = layout.kind === "ready" ? (layout.max / yScale - layout.min / yScale) / 2 : 0;
+  const yDigits = yInterval === 0 ? 3 : Math.min(17, Math.max(3, Math.ceil(-Math.log10(yInterval)) + 2));
+  // Long absolute labels cannot fit the existing readable tick gutter. Move only
+  // their notation to a shared equation; the data domain and coordinates stay raw.
+  const sharedAxis = layout.kind === "ready" && layout.min !== layout.max
+    && [layout.min, layout.min * 0.5 + layout.max * 0.5, layout.max].some((value) => axisValue(value, yDigits).length > 7);
+  const roundedOffset = layout.kind === "ready" ? Number(layout.min.toPrecision(3)) : 0;
+  const axisOffset = sharedAxis && layout.kind === "ready" && yInterval < 0.05
+    ? Math.abs(layout.min - roundedOffset) <= layout.max - layout.min ? roundedOffset : layout.min
+    : 0;
+  const axisMagnitude = layout.kind === "ready"
+    ? Math.max(Math.abs(layout.min - axisOffset), Math.abs(layout.max - axisOffset)) : 1;
+  const axisScale = sharedAxis ? 10 ** Math.max(-323, Math.floor(Math.log10(axisMagnitude))) : 1;
   const frames = layout.kind === "ready" ? layout.visible.frames : [];
   const position = sourceFrame === null ? -1 : fkFrameIndex(frames, sourceFrame);
   const index = frames[position] === sourceFrame ? position : -1;
@@ -177,13 +194,14 @@ export function TracePlot(props: TracePlotProps) {
     : "Selected frame unavailable in this window";
   return <figure className={`trace-plot ${compact ? "trace-plot--compact" : "trace-plot--detail"}`}
     data-source-frame={sourceFrame ?? "unavailable"} data-window-start={window.startFrame}
-    data-window-end={window.endFrame} data-unit={labels.unit}>
+    data-window-end={window.endFrame} data-unit={labels.unit}
+    data-axis-offset={axisOffset} data-axis-scale={axisScale}>
     <figcaption id={`${id}-title`}><strong>{labels.title}</strong><span>{labels.unit}</span></figcaption>
     {!compact && <div className="trace-plot__legend"><span><i />Prediction (solid)</span><span><i />GT (dashed)</span></div>}
     <svg ref={svgRef} viewBox={`0 0 ${width} ${axisHeight}`} height={axisHeight}
       style={stackedTimeAxis ? { height: axisHeight } : undefined}
       role={frames.length ? "slider" : "img"} tabIndex={frames.length ? 0 : undefined}
-      aria-labelledby={`${id}-title`} aria-describedby={`${id}-help`}
+      aria-labelledby={`${id}-title`} aria-describedby={`${id}-help${sharedAxis ? ` ${id}-axis` : ""}`}
       aria-valuemin={frames[0]} aria-valuemax={frames.at(-1)}
       aria-valuenow={selected ? sourceFrame : undefined} aria-valuetext={valueText}
       onKeyDown={selectKey} onClick={(event) => {
@@ -214,7 +232,8 @@ export function TracePlot(props: TracePlotProps) {
         {(layout.min === layout.max ? [0.5] : [0, 0.5, 1]).map((fraction) => {
           const value = layout.min * (1 - fraction) + layout.max * fraction;
           return <g key={fraction}><line className="trace-plot__grid" x1={layout.left} x2={layout.right} y1={layout.y(value)} y2={layout.y(value)} />
-            <text x={layout.left - 8} y={layout.y(value) + 4} textAnchor="end">{axisValue(value)}</text></g>;
+            <text x={layout.left - 8} y={layout.y(value) + 4} textAnchor="end">{sharedAxis
+              ? axisValue((value - axisOffset) / axisScale, 3) : axisValue(value, yDigits)}</text></g>;
         })}
         <g className="trace-plot__time-axis">{(window.startFrame === window.endFrame ? [0.5] : [0, 0.5, 1]).map((fraction, tickIndex) => {
           const frame = window.startFrame * (1 - fraction) + window.endFrame * fraction;
@@ -237,6 +256,9 @@ export function TracePlot(props: TracePlotProps) {
           x1={layout.x(sourceFrame)} x2={layout.x(sourceFrame)} y1={layout.top} y2={layout.bottom} />}
       </> : <text x={width / 2} y={height / 2} textAnchor="middle">{layout.kind === "empty" ? "No valid samples" : "Invalid chart data"}</text>}
     </svg>
+    {sharedAxis && <p id={`${id}-axis`} className="trace-plot__notice" data-axis-equation>
+      Y = ({axisOffset}) + tick × {axisScale} · {labels.unit}
+    </p>}
     {layout.kind === "ready" && layout.sampled.unavailableBands.length > 0 && <p className="trace-plot__notice">Gap density unavailable · zoom in</p>}
     <p className="trace-plot__inspection" data-selection-status={selected ? "available" : "unavailable"}>{valueText}
       {!compact && selected && <> · Prediction {displayValue(series.predicted[rawIndex])} · GT {displayValue(series.target[rawIndex])} {labels.unit}</>}

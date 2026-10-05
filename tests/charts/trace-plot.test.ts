@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import index from "../../index.html";
+import type { Job } from "../../src/contracts";
 import { TracePlot, tracePlotGeometry } from "../../src/client/charts/TracePlot";
 import type { TracePlotProps, TracePlotSeries } from "../../src/client/charts/TracePlot";
 
@@ -168,3 +170,108 @@ test("late narrow windows retain distinct readable absolute time ticks", () => {
     expect(input).toEqual(original);
   }
 });
+
+test("narrow visible Y intervals retain distinct faithful numeric labels", () => {
+  // Given: the actual left gripper interval, a narrow negative joint and scaled extremes.
+  for (const [min, max] of [
+    [1, 1.0023191526575088],
+    [-1.832595705986023, -1.8220442723474304],
+    [1e-12, 1.0023191526575088e-12],
+    [1e300, 1.0023191526575088e300],
+    [-1e300, -0.9976808473424912e300],
+    [1, 1.0000000023191526],
+    [-1.0000000023191526, -1],
+  ] as const) {
+    const input = { frames: [0, 1, 2], predicted: [max, min, max], target: [min, min, min], fps: 30 };
+    const original = structuredClone(input);
+    for (const compact of [false, true]) {
+      // When: the real component renders the finite visible interval.
+      const rendered = markup({ series: input, window: { startFrame: 0, endFrame: 2 }, compact });
+      const ticks = [...rendered.matchAll(/<g><line class="trace-plot__grid"[^>]+><\/line><text[^>]+>([^<]+)<\/text><\/g>/g)]
+        .map((match) => match[1] ?? "");
+      // Then: each label represents its own tick within a tenth of the tick interval.
+      expect(ticks).toHaveLength(3);
+      expect(new Set(ticks).size).toBe(3);
+      ticks.forEach((tick, index) => {
+        const expected = min * (1 - index / 2) + max * (index / 2);
+        expect(Number.isFinite(Number(tick))).toBe(true);
+        const offset = Number(rendered.match(/data-axis-offset="([^"]+)"/)?.[1] ?? 0);
+        const factor = Number(rendered.match(/data-axis-scale="([^"]+)"/)?.[1] ?? 1);
+        expect(Math.abs((offset + Number(tick) * factor - expected) / (max - min))).toBeLessThan(0.05);
+        expect(tick.length).toBeLessThanOrEqual(12);
+      });
+      expect(input).toEqual(original);
+    }
+  }
+});
+
+test("closer signed intervals keep their rendered ticks inside readable real App plots", async () => {
+  // Given: the independent verifier's exact +/-1 ranges in an isolated fixture job.
+  const { fixtureJob }: { fixtureJob: (name: string) => Job } = await import(new URL("../fixtures/redesign/index.mjs", import.meta.url).href);
+  const { startHarness }: { startHarness: (options: { baseURL: string; viewport: string; theme: string }) => Promise<{
+    openPage: () => Promise<{ evaluate: (script: string) => Promise<unknown>; cdp: (method: string, params: Record<string, unknown>) => Promise<unknown> }>;
+    close: () => Promise<unknown>;
+  }> } = await import(new URL("../e2e/harness.mjs", import.meta.url).href);
+  const job = fixtureJob("rby1-16");
+  if (!job.result) throw new Error("Completed chart fixture required");
+  for (const trace of job.result.traces) {
+    for (const rows of [trace.predicted, trace.target]) rows.forEach((row, i) => {
+      row[0] = rows === trace.predicted && i % 2 === 0 ? 1.0000000023191526 : 1;
+      row[15] = rows === trace.predicted && i % 2 === 0 ? -1 : -1.0000000023191526;
+    });
+  }
+  const original = JSON.stringify(job);
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": index }, fetch(request) {
+    const path = new URL(request.url).pathname;
+    return path === "/api/jobs" ? Response.json([job])
+      : path === `/api/jobs/${job.id}` ? Response.json(job) : new Response("Not found", { status: 404 });
+  } });
+  const harness = await startHarness({ baseURL: server.url.href, viewport: "390x844", theme: "system" });
+  try {
+    const page = await harness.openPage();
+    await page.evaluate('document.documentElement.dataset.theme="dark"');
+    for (const dimension of [0, 15]) for (const detail of [false, true]) {
+      // When: the current production App presents a compact or detail chart.
+      if (detail) {
+        const point: { x: number; y: number } = JSON.parse(String(await page.evaluate(`JSON.stringify((()=>{
+          const el=document.querySelector('[data-qa-detail="${dimension}"]');el.scrollIntoView({block:'center'});
+          const box=el.getBoundingClientRect();
+          window.__labelSignal=new Promise((resolve,reject)=>{
+            const observer=new MutationObserver(()=>{if(document.querySelector('.detail-panel svg')){observer.disconnect();clearTimeout(timer);resolve(true)}});
+            observer.observe(document.documentElement,{subtree:true,childList:true});
+            const timer=setTimeout(()=>{observer.disconnect();reject(Error('Detail event deadline'))},5000);
+          });
+          return {x:box.x+box.width/2,y:box.y+box.height/2};
+        })())`)));
+        for (const type of ["mousePressed", "mouseReleased"]) await page.cdp("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+        await page.evaluate("window.__labelSignal");
+      }
+      const selector = detail ? ".detail-panel .trace-plot" : `[data-source-index="${dimension}"] .trace-plot`;
+      await page.evaluate("document.fonts.ready");
+      await page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+      const bounds: { contained: boolean; readable: boolean; distinct: boolean } = JSON.parse(String(await page.evaluate(`JSON.stringify((()=>{
+        const plot=document.querySelector(${JSON.stringify(selector)}),svg=plot.querySelector('svg');plot.scrollIntoView({block:'center'});
+        const box=svg.getBoundingClientRect(),matrix=svg.getScreenCTM(),ticks=[...svg.querySelectorAll('g > .trace-plot__grid + text')];
+        return {contained:ticks.every(t=>{const b=t.getBoundingClientRect();return b.left>=box.left-1&&b.right<=box.right+1}),
+          readable:ticks.every(t=>parseFloat(getComputedStyle(t).fontSize)*Math.hypot(matrix.a,matrix.b)>=13.9),
+          distinct:new Set(ticks.map(t=>t.textContent)).size===3};
+      })())`)));
+      // Then: actual pixels retain the complete leading/sign glyphs at readable type.
+      expect(bounds).toEqual({ contained: true, readable: true, distinct: true });
+      if (detail) {
+        await page.evaluate(`(()=>{
+          window.__labelSignal=new Promise((resolve,reject)=>{
+            const observer=new MutationObserver(()=>{if(document.querySelector('[data-source-index="15"] svg')){observer.disconnect();clearTimeout(timer);resolve(true)}});
+            observer.observe(document.documentElement,{subtree:true,childList:true});
+            const timer=setTimeout(()=>{observer.disconnect();reject(Error('Overview event deadline'))},5000);
+          });document.querySelector('[data-close-detail]').click();
+        })()`);
+        await page.evaluate("window.__labelSignal");
+      }
+    }
+    expect(JSON.stringify(job)).toBe(original);
+  } finally {
+    expect(await harness.close()).toEqual({ browserOpen: false, serverOpen: false, tempStoreExists: false, cleanupErrors: [] });
+    server.stop(true);
+  }
+}, 30_000);
