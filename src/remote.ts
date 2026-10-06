@@ -37,7 +37,7 @@ export type RemoteRequest = {
 export function workerCommand(request: RemoteRequest): string {
   const python = request.operation === "discover" ? "python3" : `${request.repo}/.venv/bin/python`;
   const payload = Buffer.from(JSON.stringify(request)).toString("base64");
-  return `exec env PYTHONDONTWRITEBYTECODE=1 ${quoteShell(python)} -u - ${quoteShell(payload)}`;
+  return `exec env PYTHONDONTWRITEBYTECODE=1 XLA_PYTHON_CLIENT_PREALLOCATE=false ${quoteShell(python)} -u - ${quoteShell(payload)}`;
 }
 
 export async function consumeLines(
