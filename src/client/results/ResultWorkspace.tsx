@@ -169,7 +169,15 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
   };
   const selectWindow = (window: FrameWindow) => {
     if (parsed.kind !== "ready") return;
-    const clamped = clampFrameWindow(parsed.series, window);
+    // Stored chunks may extend past the last scored frame; let the window reach their end.
+    const chunkEnd = result.samples.reduce((end, sample) => sample.episode === episode
+      ? Math.max(end, sample.frame + sample.valid.lastIndexOf(true)) : end, -Infinity);
+    const scoredEnd = parsed.series.frames.at(-1) ?? -Infinity;
+    const clamped = chunkEnd > scoredEnd && Number.isFinite(window.startFrame) && Number.isFinite(window.endFrame)
+      && window.startFrame <= window.endFrame
+      ? { startFrame: Math.max(parsed.series.frames[0] ?? 0, Math.min(chunkEnd, window.startFrame)),
+        endFrame: Math.max(parsed.series.frames[0] ?? 0, Math.min(chunkEnd, window.endFrame)) }
+      : clampFrameWindow(parsed.series, window);
     if (clamped) setSelection((current) => ({ ...current, window: clamped }));
   };
   const closeDetail = () => { returnFocus.current = opener.current !== null; setView("overview"); };
@@ -199,6 +207,7 @@ function EpisodeWorkspace({ job, result, episode, onEpisodeChange }: {
   switch (view) {
     case "overview":
       content = <OverviewGrid actionNames={result.actionNames} series={series} sourceFrame={selection.sourceFrame}
+        chunks={result.samples.filter((sample) => sample.episode === episode)}
         window={selection.window} onFrameSelect={selectFrame} onDetailOpen={(dimension) => {
           opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
           setSelection((current) => ({ ...current, dimension })); setView("detail");

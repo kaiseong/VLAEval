@@ -475,7 +475,7 @@ def score_frames(dataset, policy, data, model, request, episodes):
     warnings = [
         "Chunk metrics use all valid future rows; episode metrics and traces use first steps.",
         "Aggregate metrics combine native action dimensions; compare perDimension values when units differ.",
-        "Future samples are capped at 8 chunks; first-step traces cover every evaluated frame.",
+        "Future chunks are stored for every evaluated frame; first-step traces cover every evaluated frame.",
     ]
     if request["maxSamples"] or request["stride"] != 1:
         warnings.append("Quick subset enabled: maxSamples/stride limit whole-episode coverage.")
@@ -548,9 +548,8 @@ def score_frames(dataset, policy, data, model, request, episodes):
         trace["frames"].append(frame)
         trace["predicted"].append(predicted[0].tolist())
         trace["target"].append(target[0].tolist())
-        if len(samples) < 8:
-            samples.append({"episode": episode, "frame": frame, "prompt": str(packed.get("prompt", raw.get("task", ""))),
-                            "predicted": predicted.tolist(), "target": target.tolist(), "valid": valid.tolist()})
+        samples.append({"episode": episode, "frame": frame, "prompt": str(packed.get("prompt", raw.get("task", ""))),
+                        "predicted": predicted.tolist(), "target": target.tolist(), "valid": valid.tolist()})
         emit({"type": "progress", "completed": completed, "total": len(selection),
               "message": f"Episode {episode}, frame {frame}"})
     result = metrics.result()

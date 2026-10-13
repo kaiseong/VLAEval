@@ -321,7 +321,7 @@ def test_scoring_when_seed_repeated_preserves_noise(scoring_objects, capsys):
         np.testing.assert_array_equal(old, new)
 
 
-def test_scoring_when_samples_capped_retains_all_traces(scoring_objects):
+def test_scoring_stores_a_chunk_for_every_evaluated_frame(scoring_objects):
     # Given
     dataset, policy, data, model, request, episodes = scoring_objects
     episodes[0]["length"] = 6
@@ -329,7 +329,7 @@ def test_scoring_when_samples_capped_retains_all_traces(scoring_objects):
     # When
     result = runtime["score_frames"](dataset, policy, data, model, request, episodes)
     # Then
-    assert len(result["samples"]) == 8
+    assert len(result["samples"]) == 12
     assert result["framesEvaluated"] == sum(len(t["frames"]) for t in result["traces"]) == 12
 
 

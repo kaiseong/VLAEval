@@ -11,10 +11,8 @@ const names = [
   "right_gripper_0", "left_gripper_0",
 ];
 const canonical = [
-  "right_arm_0", "right_arm_1", "left_arm_0", "left_arm_1",
-  "right_arm_2", "right_arm_3", "left_arm_2", "left_arm_3",
-  "right_arm_4", "right_arm_5", "left_arm_4", "left_arm_5",
-  "right_arm_6", "right_gripper_0", "left_arm_6", "left_gripper_0",
+  ...Array.from({ length: 7 }, (_, i) => `left_arm_${i}`), "left_gripper_0",
+  ...Array.from({ length: 7 }, (_, i) => `right_arm_${i}`), "right_gripper_0",
 ];
 const series = { frames: [0, 3, 9], predicted: [[0, 1], [2, 3], [10, 5]], target: [[0, 1], [0, 1], [0, 1]], fps: 30 };
 function markup(overrides: Partial<OverviewGridProps> = {}) {
@@ -68,8 +66,8 @@ test("reordered names render the corresponding raw channel values and statistics
     frames: [0], predicted: [inputNames.map((_, i) => i + 1)], target: [inputNames.map(() => 0)], fps: 30,
   }, sourceFrame: 0, window: { startFrame: 0, endFrame: 0 } });
   const firstPanel = rendered.split('class="overview-panel"')[1];
-  expect(firstPanel).toContain('data-channel-name="right_arm_0" data-source-index="15"');
-  expect(firstPanel).toContain('data-mae="16" data-rmse="16"');
+  expect(firstPanel).toContain('data-channel-name="left_arm_0" data-source-index="8"');
+  expect(firstPanel).toContain('data-mae="9" data-rmse="9"');
 });
 
 test("every plot receives the same controlled frame and window with only one legend", () => {
@@ -92,4 +90,27 @@ test("empty malformed and dimension-mismatched traces never fabricate panel scor
     expect(rendered).not.toContain("<svg");
     expect(rendered).toContain('role="status"');
   }
+});
+
+test("RB-Y1 panels split into a left-arm column and a right-arm column", () => {
+  const rendered = markup({ actionNames: names, series: { frames: [0], predicted: [names.map(() => 1)], target: [names.map(() => 0)], fps: 30 },
+    sourceFrame: 0, window: { startFrame: 0, endFrame: 0 } });
+  const [left, right] = rendered.split('data-arm="right"');
+  expect(left).toContain('data-arm="left"');
+  expect((left?.match(/data-side="left"/g) ?? []).length).toBe(8);
+  expect(left).not.toContain('data-side="right"');
+  expect((right?.match(/data-side="right"/g) ?? []).length).toBe(8);
+});
+
+test("predicted chunks are drawn per anchor over GT and replace the first-step line", () => {
+  const chunks = [0, 3, 9].map((frame) => ({ frame, predicted: [[frame, 1], [frame + 1, 2], [frame + 2, 3]],
+    target: [[0, 1], [0, 1], [0, 1]], valid: [true, true, false] }));
+  const rendered = markup({ chunks, sourceFrame: 3 });
+  expect((rendered.match(/data-overlay="chunk-/g) ?? []).length).toBe(6);
+  expect((rendered.match(/data-overlay="gt"/g) ?? []).length).toBe(2);
+  expect((rendered.match(/trace-plot__overlay--emphasized/g) ?? []).length).toBe(2);
+  expect(rendered).toContain("H=3");
+  const firstPanel = rendered.split('class="overview-panel"')[1] ?? "";
+  expect(firstPanel).not.toMatch(/class="trace-plot__predicted"><g/);
+  expect(firstPanel).toContain('data-mae="4"');
 });

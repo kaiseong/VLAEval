@@ -1,3 +1,6 @@
+.trace-plot__overlay { stroke-width: 1.25; opacity: 0.8; }
+.trace-plot__overlay--emphasized { stroke-width: 2.75; opacity: 1; }
+.trace-plot__overlay--reference { stroke: var(--target); stroke-width: 1.5; stroke-dasharray: 5 3; opacity: 1; }
 .trace-plot {
   margin: 0;
   min-width: 0;

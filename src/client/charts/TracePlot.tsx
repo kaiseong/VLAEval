@@ -26,6 +26,17 @@ export type TracePlotProps = {
   readonly geometry?: RenderSamplingResult;
   /** Validated bounded Worker view; series.frames is the existing native source index. */
   readonly boundedView?: FkView["channels"][number];
+  /** Extra display-only trajectories (e.g. predicted action chunks) drawn over the series. */
+  readonly overlays?: readonly TraceOverlay[];
+};
+
+export type TraceOverlay = {
+  readonly key: string;
+  readonly color: string;
+  readonly emphasized?: boolean;
+  /** Ground-truth reference drawn dashed in the GT color. */
+  readonly reference?: boolean;
+  readonly points: readonly { readonly frame: number; readonly value: number }[];
 };
 
 type LayoutOptions = {
@@ -37,6 +48,7 @@ type LayoutOptions = {
   readonly wrapThreshold?: number;
   readonly geometry?: RenderSamplingResult;
   readonly boundedView?: FkView["channels"][number];
+  readonly overlays?: readonly TraceOverlay[];
 };
 
 /** Display geometry only. Raw values and source IDs remain untouched. */
@@ -87,6 +99,14 @@ export function tracePlotGeometry(options: LayoutOptions) {
           if (typeof value === "number" && Number.isFinite(value)) {
             min = Math.min(min, value);
             max = Math.max(max, value);
+          }
+        }
+      }
+      for (const overlay of options.overlays ?? []) {
+        for (const point of overlay.points) {
+          if (point.frame >= window.startFrame && point.frame <= window.endFrame && Number.isFinite(point.value)) {
+            min = Math.min(min, point.value);
+            max = Math.max(max, point.value);
           }
         }
       }
@@ -152,7 +172,8 @@ export function TracePlot(props: TracePlotProps) {
     ...(props.wrapThreshold === undefined ? {} : { wrapThreshold: props.wrapThreshold }),
     ...(props.geometry === undefined ? {} : { geometry: props.geometry }),
     ...(props.boundedView === undefined ? {} : { boundedView: props.boundedView }),
-  }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry, props.boundedView]);
+    ...(props.overlays === undefined ? {} : { overlays: props.overlays }),
+  }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry, props.boundedView, props.overlays]);
   // Use the displayed interval (including Worker-supplied domains), not source rows.
   // Normalized subtraction avoids overflow for opposite extreme endpoints.
   const yScale = layout.kind === "ready" ? Math.max(Math.abs(layout.min), Math.abs(layout.max)) || 1 : 1;
@@ -245,6 +266,17 @@ export function TracePlot(props: TracePlotProps) {
             y={layout.top} width={Math.max(0, layout.x(Math.min(window.endFrame, band.endFrame)) - layout.x(Math.max(window.startFrame, band.startFrame)))} height={layout.bottom - layout.top} />
           <title>Gap density unavailable; zoom in for raw inspection</title>
         </g>)}
+        {props.overlays && props.overlays.length > 0 && <g className="trace-plot__overlays">
+          {props.overlays.map((overlay) => {
+            const points = overlay.points.filter((p) => p.frame >= window.startFrame && p.frame <= window.endFrame && Number.isFinite(p.value));
+            if (!points.length) return null;
+            return <path key={overlay.key} data-overlay={overlay.key} fill="none"
+              {...(overlay.reference ? {} : { stroke: overlay.color })}
+              className={["trace-plot__overlay", overlay.emphasized ? "trace-plot__overlay--emphasized" : "",
+                overlay.reference ? "trace-plot__overlay--reference" : ""].filter(Boolean).join(" ")}
+              d={points.map((p, i) => `${i ? "L" : "M"}${layout.x(p.frame)},${layout.y(p.value)}`).join(" ")} />;
+          })}
+        </g>}
         {(["predicted", "target"] as const).map((name) => <g key={name} className={`trace-plot__${name}`}>
           {layout.paths[name].map((segment, segmentIndex) => <g key={segmentIndex}
             data-source-frame-start={segment[0]?.frame} data-source-frame-end={segment.at(-1)?.frame}>
