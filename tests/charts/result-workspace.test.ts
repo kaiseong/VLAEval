@@ -2,8 +2,16 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { jobSchema } from "../../src/contracts";
+import type { Job } from "../../src/contracts";
 import { Results } from "../../src/client/Results";
 import { initialWorkspaceSelection, ResultWorkspace } from "../../src/client/results/ResultWorkspace";
+import { openedRun } from "../job-routes";
+
+function workspace(job: Job) {
+  const run = openedRun(job);
+  if (!run.result) throw new Error("Fixture missing result");
+  return createElement(ResultWorkspace, { job: run, summary: run.result });
+}
 
 function fixtureJob(name: "rby1-16" | "irregular-frames" | "scalar-padding") {
   const scalar = name === "scalar-padding";
@@ -95,7 +103,7 @@ test("missing episode initializes explicit unavailable cursor without borrowing 
 
 test("default workspace mounts all sixteen real channel sliders with one selection", () => {
   const job = jobSchema.parse(fixtureJob("rby1-16"));
-  const html = renderToStaticMarkup(createElement(Results, { job }));
+  const html = renderToStaticMarkup(createElement(Results, { job: openedRun(job) }));
   expect((html.match(/class="overview-panel"/g) ?? []).length).toBe(16);
   expect((html.match(/role="slider"/g) ?? []).length).toBe(16);
   const plots = html.match(/<figure[^>]*>/g) ?? [];
@@ -112,7 +120,7 @@ test("first-step panel statistics do not use run chunk metrics", () => {
   const job = jobSchema.parse(fixtureJob("scalar-padding"));
   if (!job.result) throw new Error("Fixture missing result");
   const before = structuredClone(job.result);
-  const html = renderToStaticMarkup(createElement(ResultWorkspace, { job, result: job.result }));
+  const html = renderToStaticMarkup(workspace(job));
   const panel = html.match(/data-mae="([^"]+)" data-rmse="([^"]+)"/);
   expect(Number(panel?.[1])).toBe(1);
   expect(Number(panel?.[2])).toBe(Math.sqrt(2));
@@ -122,7 +130,7 @@ test("first-step panel statistics do not use run chunk metrics", () => {
 
 test("job errors stay outside collapsed provenance", () => {
   const job = jobSchema.parse(fixtureJob("rby1-16"));
-  const html = renderToStaticMarkup(createElement(Results, { job: { ...job, error: "saved result error" } }));
+  const html = renderToStaticMarkup(createElement(Results, { job: openedRun({ ...job, error: "saved result error" }) }));
   expect(html.indexOf('role="alert"')).toBeGreaterThan(0);
   expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('<details'));
 });
@@ -132,7 +140,7 @@ test("analysis leaves aggregate score tables to the separate evaluation tab", ()
   const job = fixtureJob("scalar-padding");
   if (!job.result) throw new Error("Fixture missing result");
   // When the actual workspace renders the default selected episode 3.
-  const html = renderToStaticMarkup(createElement(ResultWorkspace, { job, result: job.result }));
+  const html = renderToStaticMarkup(workspace(job));
   const values = (scope: string) => {
     const row = html.match(new RegExp(`<tr data-score-scope="${scope}">([\\s\\S]*?)</tr>`))?.[1] ?? "";
     return [...row.matchAll(/data-metric="[^"]+" data-value="([^"]+)"/g)].map((match) => Number(match[1]));

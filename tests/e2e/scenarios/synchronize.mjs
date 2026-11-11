@@ -9,6 +9,8 @@ import { JobStore } from "../../../src/jobs";
 import { ProfileCatalog } from "../../../src/kinematics/catalog";
 import { buildFkWorkerAsset } from "../../../src/kinematics/worker-asset";
 import { rawTraceCsv } from "../../../src/client/analysis/exports";
+import { fixtureJobResponse } from "../../job-routes";
+import { recordServerDownloads } from "./server-downloads.mjs";
 
 // Runs the production App, not a component mount or a second workspace implementation.
 export async function runScenario({ args, outputPath, startHarness }) {
@@ -48,11 +50,8 @@ export async function runScenario({ args, outputPath, startHarness }) {
         const path = new URL(request.url).pathname;
         let response;
         if (path === "/assets/fk.worker.js") response = new Response(worker, { headers: { "content-type": "text/javascript" } });
-        else if (path === "/api/jobs") response = Response.json(jobs);
-        else if (path.startsWith("/api/jobs/")) {
-          const job = jobs.find((item) => item.id === path.split("/").at(-1));
-          response = job ? Response.json(job) : Response.json({ error: "Not found" }, { status: 404 });
-        } else response = await api(request);
+        else if (path === "/api/jobs" || path.startsWith("/api/jobs/")) response = fixtureJobResponse(new URL(request.url), jobs);
+        else response = await api(request);
         http.push({ path, method: request.method, status: response.status, headers: Object.fromEntries(response.headers), body: await response.clone().text() });
         return response;
       },
@@ -177,6 +176,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
       window.__task17Blobs.push({type:blob.type,promise:blob.text(),bytes:blob.arrayBuffer().then(b=>Array.from(new Uint8Array(b)))});
       window.dispatchEvent(new CustomEvent('task17-blob',{detail:window.__task17Blobs.length-1}));
       return create(blob)};return true})()`);
+    await page.evaluate(recordServerDownloads);
     async function captureDerived(selector) {
       await page.evaluate(`(()=>{
         window.__task17BlobSignal=new Promise((resolve,reject)=>{
@@ -191,9 +191,11 @@ export async function runScenario({ args, outputPath, startHarness }) {
       return page.evaluate(`window.__task17Blobs[${index}].promise`);
     }
     await click('[data-export="json"]');
+    await page.evaluate("window.__serverDownload");
     const json = await page.evaluate("window.__task17Blobs.at(-1).promise");
     checkValue("production-raw-json-preserves-source", JSON.stringify(JSON.parse(json)) === JSON.stringify(first.result));
     await click('[data-export="csv"]');
+    await page.evaluate("window.__serverDownload");
     const csv = Buffer.from(await page.evaluate("window.__task17Blobs.at(-1).bytes")).toString("utf8");
     checkValue("production-raw-csv-preserves-all-episodes-and-frames", csv === rawTraceCsv(first.result), { rows: csv.split("\r\n").length });
     if (args.case === "scopes") {

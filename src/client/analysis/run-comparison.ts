@@ -1,9 +1,20 @@
-import type { Job } from "../../contracts";
+import type { JobSummary, Result } from "../../contracts";
 
-export type CompletedEvaluation = Job & { readonly result: NonNullable<Job["result"]> };
+export type CompletedEvaluation = JobSummary & { readonly result: NonNullable<JobSummary["result"]> };
 
-export function isCompletedEvaluation(job: Job): job is CompletedEvaluation {
+export function isCompletedEvaluation(job: JobSummary): job is CompletedEvaluation {
   return job.status === "completed" && job.result !== null;
+}
+
+/** Scored anchors per episode; the job summary carries its SHA-256 as comparison.scoredFrames. */
+export function scoredFramesKey(result: Result) {
+  return result.traces.map((item) => ({ episode: item.episode, frames: item.frames })).sort((x, y) => x.episode - y.episode);
+}
+
+/** Full-chunk valid masks; the job summary carries its SHA-256 as comparison.validMasks. */
+export function validMasksKey(result: Result) {
+  return result.samples.map((item) => ({ episode: item.episode, frame: item.frame, valid: item.valid }))
+    .sort((x, y) => x.episode - y.episode || x.frame - y.frame);
 }
 
 /** Compare evaluation conditions, not model identity or metric values. */
@@ -16,17 +27,14 @@ export function comparisonDifferences(base: CompletedEvaluation, other: Complete
   if (a.fps !== b.fps) differences.push("fps");
   const episodes = (job: CompletedEvaluation) => job.result.perEpisode.map((item) => item.episode).sort((x, y) => x - y);
   if (!equal(episodes(base), episodes(other))) differences.push("episodes");
-  const frames = (job: CompletedEvaluation) => job.result.traces
-    .map((item) => ({ episode: item.episode, frames: item.frames })).sort((x, y) => x.episode - y.episode);
-  if (!equal(frames(base), frames(other)) || a.framesEvaluated !== b.framesEvaluated) differences.push("scored_frames");
+  if (a.comparison.scoredFrames !== b.comparison.scoredFrames || a.framesEvaluated !== b.framesEvaluated)
+    differences.push("scored_frames");
   const horizons = (job: CompletedEvaluation) => job.result.perHorizon
     .map((item) => [item.step, item.count]).sort((x, y) => (x[0] ?? 0) - (y[0] ?? 0));
   if (!equal(horizons(base), horizons(other)) || a.validSteps !== b.validSteps) differences.push("horizon_coverage");
-  const masks = (job: CompletedEvaluation) => job.result.samples
-    .map((item) => ({ episode: item.episode, frame: item.frame, valid: item.valid }))
-    .sort((x, y) => x.episode - y.episode || x.frame - y.frame);
-  if (a.samples.length !== a.framesEvaluated || b.samples.length !== b.framesEvaluated) differences.push("coverage_unknown");
-  else if (!equal(masks(base), masks(other))) differences.push("valid_masks");
+  if (a.comparison.samples !== a.framesEvaluated || b.comparison.samples !== b.framesEvaluated)
+    differences.push("coverage_unknown");
+  else if (a.comparison.validMasks !== b.comparison.validMasks) differences.push("valid_masks");
   if (base.request.stride !== other.request.stride || base.request.maxSamples !== other.request.maxSamples) differences.push("sampling");
   if (a.seed !== b.seed) differences.push("seed");
   if (a.numSteps !== b.numSteps) differences.push("inference_steps");

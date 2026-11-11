@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { jobSchema } from "../../src/contracts";
 import { CoverageSummary } from "../../src/client/results/CoverageSummary";
 import { ResultWorkspace } from "../../src/client/results/ResultWorkspace";
+import { openedRun } from "../job-routes";
 import { resultFixture } from "../result-fixture";
 
 const boundaries = [
@@ -144,7 +145,7 @@ test("workspace uses recorded episode count when legacy display trace is missing
   if (!job.result) throw new Error("Legacy result fixture is missing");
 
   // When: the actual Results workspace renders the selected legacy episode.
-  const html = renderToStaticMarkup(createElement(ResultWorkspace, { job, result: job.result }));
+  const html = renderToStaticMarkup(createElement(ResultWorkspace, { job: openedRun(job), summary: openedRun(job).result! }));
 
   // Then: the recorded scored count wins, while original length and masks stay unknown.
   expect(html).toContain('data-scored-anchors="3"');

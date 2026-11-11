@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import index from "../../index.html";
-import { fixtureJob, fixtureJobs, fixtureNames, fixtureSnapshot, transportResponse } from "../fixtures/redesign/index.mjs";
+import { fixtureJobs, fixtureNames, fixtureSnapshot, transportResponse } from "../fixtures/redesign/index.mjs";
+import { fixtureJobResponse } from "../job-routes";
 
 const timeoutMs = 10_000;
 const responseBodyLimit = 1_000_000;
@@ -101,16 +102,9 @@ export async function startHarness({ fixture, transport, componentEntry, viewpor
         routes: { "/": index },
         async fetch(request) {
           const url = new URL(request.url);
-          if (url.pathname === "/api/jobs") {
+          if (url.pathname === "/api/jobs" || url.pathname.startsWith("/api/jobs/")) {
             if (transport) return captureResponse(request, transportResponse(transport));
-            return captureResponse(request, Response.json(fixtureJobs(fixture)));
-          }
-          if (url.pathname.startsWith("/api/jobs/")) {
-            if (transport) return captureResponse(request, transportResponse(transport));
-            const job = fixtureJob(fixture);
-            return captureResponse(request, job.id === url.pathname.split("/").at(-1)
-              ? Response.json(job)
-              : Response.json({ error: "Not found" }, { status: 404 }));
+            return captureResponse(request, fixtureJobResponse(url, fixtureJobs(fixture)));
           }
           if (url.pathname.startsWith("/__qa/fixtures/")) {
             const fixtureName = url.pathname.slice("/__qa/fixtures/".length);
@@ -167,7 +161,8 @@ export async function startHarness({ fixture, transport, componentEntry, viewpor
             ? "document.body.innerText.includes('요청을 완료하지 못했습니다')"
             : fixture === "malformed-and-empty"
               ? "document.body.innerText.includes('저장된 실행이 없습니다.')"
-              : "document.body.innerText.includes('qa_fixture')";
+              // The run summary shows the config at once; its episode arrives in a second request.
+              : "document.body.innerText.includes('qa_fixture') && !document.querySelector('.result-loading,[data-episode-load]')";
           await withTimeout(browser.evaluate(`new Promise((resolve,reject)=>{const ready=()=>document.querySelector("main h1")?.textContent==="에피소드 평가"&&(${loaded});if(ready())return resolve(true);const observer=new MutationObserver(()=>{if(ready()){observer.disconnect();resolve(true)}});observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});setTimeout(()=>{observer.disconnect();reject(new Error("Production React entry or requested fixture state did not render"))},${timeoutMs})})`), "React render");
           if (theme !== "system" && !baseURL) {
             await withTimeout(browser.evaluate(`new Promise((resolve,reject)=>{const theme=${JSON.stringify(theme)};const select=[...document.querySelectorAll(".rail-footer select")].find((item)=>[...item.options].some((option)=>option.value===theme));if(!select)return reject(new Error("Production theme selector was not rendered"));const root=document.documentElement;const applied=()=>root.dataset.theme===theme&&select.value===theme;const observer=new MutationObserver(()=>{if(applied()){observer.disconnect();resolve(true)}});observer.observe(root,{attributes:true,attributeFilter:["data-theme"]});select.value=theme;select.dispatchEvent(new Event("change",{bubbles:true}));if(applied()){observer.disconnect();resolve(true)}setTimeout(()=>{observer.disconnect();reject(new Error("Requested theme did not apply before capture"))},${timeoutMs})})`), "theme application");

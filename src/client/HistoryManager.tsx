@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { jobStorageSchema } from "../contracts";
-import type { Job, Session } from "../contracts";
+import type { JobSummary, Session } from "../contracts";
 import { api, errorMessage, isActive, ownerLabel, ownsJob, statusLabels } from "./api";
 import "./history-manager.css";
 
@@ -14,7 +14,7 @@ const bytesLabel = (bytes: number | null) => {
 };
 
 export function HistoryManager({ jobs, session, onDeleted }: {
-  readonly jobs: readonly Job[];
+  readonly jobs: readonly JobSummary[];
   readonly session: Session | null;
   readonly onDeleted: (id: string) => void;
 }) {

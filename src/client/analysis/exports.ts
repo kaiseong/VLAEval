@@ -35,10 +35,6 @@ export async function currentFkExport(controller: FkController, format: "json" |
   return artifact && current && sameFkIdentity(artifact.identity, current) ? artifact : null;
 }
 
-export function rawJsonExport(result: Result): string {
-  return JSON.stringify(result, null, 2);
-}
-
 function csvCell(value: string | number | boolean): string {
   return `"${String(value).replaceAll('"', '""')}"`;
 }

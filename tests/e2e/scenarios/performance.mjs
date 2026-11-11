@@ -8,6 +8,8 @@ import { sampleRenderGeometry } from "../../../src/client/analysis/render-sampli
 import { buildFkWorkerAsset } from "../../../src/kinematics/worker-asset";
 import { deriveForward } from "../../../src/kinematics/forward";
 import { fixtureJob, fixtureSnapshot } from "../../fixtures/redesign/index.mjs";
+import { fixtureJobResponse } from "../../job-routes";
+import { recordServerDownloads } from "./server-downloads.mjs";
 
 // allow: SIZE_OK — This existing acceptance scenario retains the parent-owned native
 // geometry/export oracles alongside the new admission proof; task 44 scopes edits here.
@@ -506,6 +508,7 @@ async function installDownloadCapture(page) {
       if(anchor&&window.__task20Downloads.length)window.__task20Downloads.at(-1).filename=anchor.download;
     },true);
   })()`);
+  await page.evaluate(recordServerDownloads);
 }
 
 async function captureExport(page, selector, actions) {
@@ -568,7 +571,8 @@ function rawDigests(result) {
     }
   }
   return {
-    json: sha256(JSON.stringify(result, null, 2)),
+    // The server streams the stored result as compact JSON.
+    json: sha256(JSON.stringify(result)),
     csv: csv.digest("hex"),
   };
 }
@@ -975,8 +979,9 @@ export async function runScenario({ args, outputPath, startHarness }) {
         const value = await request.json();
         admissionListener?.({ ...value, hostReceivedAt: performance.now() });
         response = new Response("received");
-      } else if (url.pathname === "/api/jobs") response = Response.json([activeJob]);
-      else if (url.pathname === `/api/jobs/${activeJob.id}`) response = Response.json(activeJob);
+      } else if (url.pathname === "/api/jobs" || url.pathname.startsWith("/api/jobs/")) {
+        response = fixtureJobResponse(url, [activeJob]);
+      }
       else if (url.pathname === "/assets/fk.worker.js") {
         response = new Response(workerBytes, { headers: { "content-type": "text/javascript" } });
       } else if (url.pathname === "/api/kinematics/profiles") {

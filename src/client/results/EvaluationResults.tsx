@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import type { Job } from "../../contracts";
+import type { JobSummary } from "../../contracts";
 import { Field, Section } from "../ui/primitives";
 import { formatMetric, metricLabels, metricMse } from "../analysis/metrics";
-import { getEpisodeChunkMetrics } from "../analysis/evaluation-results";
 import { comparisonDifferences, comparisonDifferenceLabels, isCompletedEvaluation } from "../analysis/run-comparison";
 import type { CompletedEvaluation } from "../analysis/run-comparison";
 import "./evaluation-results.css";
@@ -12,7 +11,7 @@ const runLabel = (job: CompletedEvaluation) =>
   `${job.result.config} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
 
 export function EvaluationResults({ jobs, selectedId, onSelect }: {
-  readonly jobs: readonly Job[];
+  readonly jobs: readonly JobSummary[];
   readonly selectedId: string;
   readonly onSelect: (id: string) => void;
 }) {
@@ -22,7 +21,7 @@ export function EvaluationResults({ jobs, selectedId, onSelect }: {
   const selectedJobs = useMemo(() => base ? [base, ...completed.filter((job) =>
     job.id !== base.id && comparisonIds.includes(job.id))] : [], [base, completed, comparisonIds]);
   const entries = useMemo(() => selectedJobs.map((job) => ({
-    job, episodes: getEpisodeChunkMetrics(job.result),
+    job, episodes: job.result.episodeChunkMetrics,
     differences: base && job.id !== base.id ? comparisonDifferences(base, job) : [],
   })), [selectedJobs, base]);
   const episodes = [...new Set(entries.flatMap((entry) => entry.episodes.map((item) => item.episode)))].sort((a, b) => a - b);

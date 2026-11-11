@@ -260,6 +260,8 @@ async function createCliSandbox(sandboxRoot: string) {
     join(repoRoot, "tests/fixtures/redesign/index.mjs"),
     join(sandboxRoot, "tests/fixtures/redesign/index.mjs"),
   );
+  // The harness answers fixture job routes the way the server does.
+  await symlink(join(repoRoot, "tests/job-routes.ts"), join(sandboxRoot, "tests/job-routes.ts"));
 }
 
 async function runCli(args: string[], timeoutMs = 15_000, cwd = repoRoot) {

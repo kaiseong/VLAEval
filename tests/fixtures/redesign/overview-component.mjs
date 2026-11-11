@@ -7,11 +7,13 @@ import { fixtureJob } from "./index.mjs";
 import "../../../src/client/styles.css";
 
 export async function mount(element, props = {}) {
+  const request = (path) => fetch(path).then((response) => {
+    if (!response.ok) throw new Error(`Fixture request failed: ${response.status}`);
+    return response.json();
+  });
+  // The job list sends summaries; the stored traces come from the run's result download.
   const result = props.fixture ? fixtureJob(props.fixture).result
-    : (await fetch("/api/jobs").then((response) => {
-      if (!response.ok) throw new Error(`Fixture request failed: ${response.status}`);
-      return response.json();
-    }))[0].result;
+    : await request(`/api/jobs/${(await request("/api/jobs"))[0].id}/result.json`);
   const trace = result.traces[0];
   const sourceNames = result.actionNames;
   const indices = sourceNames.map((_, i) => i);

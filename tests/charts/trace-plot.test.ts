@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import index from "../../index.html";
 import type { Job } from "../../src/contracts";
+import { fixtureJobResponse } from "../job-routes";
 import { TracePlot, tracePlotGeometry } from "../../src/client/charts/TracePlot";
 import type { TracePlotProps, TracePlotSeries } from "../../src/client/charts/TracePlot";
 
@@ -242,12 +243,20 @@ test("closer signed intervals keep their rendered ticks inside readable real App
   const original = JSON.stringify(job);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": index }, fetch(request) {
     const path = new URL(request.url).pathname;
-    return path === "/api/jobs" ? Response.json([job])
-      : path === `/api/jobs/${job.id}` ? Response.json(job) : new Response("Not found", { status: 404 });
+    return path.startsWith("/api/jobs") ? fixtureJobResponse(new URL(request.url), [job])
+      : new Response("Not found", { status: 404 });
   } });
   const harness = await startHarness({ baseURL: server.url.href, viewport: "390x844", theme: "system" });
   try {
     const page = await harness.openPage();
+    // The run's episode arrives after the summary list; measure only once its plots are on screen.
+    await page.evaluate(`new Promise((resolve,reject)=>{
+      const ready=()=>document.querySelector('[data-source-index="15"] .trace-plot svg')&&!document.querySelector('[data-episode-load]');
+      if(ready())return resolve(true);
+      const observer=new MutationObserver(()=>{if(ready()){observer.disconnect();clearTimeout(timer);resolve(true)}});
+      observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true});
+      const timer=setTimeout(()=>{observer.disconnect();reject(Error('Episode render deadline'))},8000);
+    })`);
     await page.evaluate('document.documentElement.dataset.theme="dark"');
     for (const dimension of [0, 15]) for (const detail of [false, true]) {
       // When: the current production App presents a compact or detail chart.

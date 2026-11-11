@@ -7,6 +7,7 @@ import { compiledProfileSchema, fkRequestSchema } from "../../src/kinematics/con
 import { forwardChain } from "../../src/kinematics/forward";
 import { originTransform, poseFromTransform, rotationError } from "../../src/kinematics/math";
 import { buildPredictionWorkerAsset } from "../../src/kinematics/worker-asset";
+import { fixtureJobResponse } from "../job-routes";
 import { predictionDataSchema } from "../../src/client/analysis/prediction-contracts";
 
 type Page = {
@@ -108,8 +109,7 @@ for (const seeded of [true, false]) test(`Cartesian source ${seeded ? "derives r
   let workerRequests = 0;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": index }, fetch(request) {
     const path = new URL(request.url).pathname;
-    if (path === "/api/jobs") return Response.json([job]);
-    if (path === `/api/jobs/${job.id}`) return Response.json(job);
+    if (path.startsWith("/api/jobs")) return fixtureJobResponse(new URL(request.url), [job]);
     if (path === "/api/kinematics/profiles") return Response.json({ profiles: [profile] });
     if (path === `/api/kinematics/profiles/${profile.profileHash}`) return Response.json(profile);
     if (path === "/assets/prediction.worker.js") {

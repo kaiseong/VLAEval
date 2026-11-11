@@ -1,4 +1,4 @@
-.result-workspace { min-width: 0; display: grid; gap: var(--s1); }
+.result-workspace, .result-loading { min-width: 0; display: grid; gap: var(--s1); }
 .result-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s4); }
 .result-toolbar > div:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .result-toolbar h2 { font-size: var(--section); }
@@ -31,7 +31,7 @@
   .result-workspace .overview__heading { gap: var(--s1); margin-bottom: var(--s2); }
   .result-workspace .overview-panel { padding: var(--s1); }
   /* Results use the full viewport width; other pages keep the readable column. */
-  .main > *:has(.result-workspace) { max-width: none; }
+  .main > *:has(.result-workspace, .result-loading) { max-width: none; }
 }
 @media (max-width: 760px) {
   .result-toolbar > div:first-child { flex-basis: 100%; }
@@ -45,3 +45,6 @@
   .result-content > .field { max-width: 100%; }
   .result-provenance dl { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Episode chunks load page by page (episode-result.ts); the bar and remaining time follow the received pages. */
+.episode-load progress { display: block; width: 100%; height: 0.5rem; margin-top: var(--s2); accent-color: var(--accent); }

@@ -3,7 +3,7 @@ import { Activity, Check, Database, FolderSearch, Play, RefreshCw, Settings2, Sq
 import { z } from "zod";
 import {
   configsSchema, connectionSchema, discoverySchema, discoverRequestSchema,
-  episodesRequestSchema, episodesSchema, jobRequestSchema, jobSchema, sessionSchema, type Job, type Session,
+  episodesRequestSchema, episodesSchema, jobRequestSchema, jobSummarySchema, sessionSchema, type JobSummary, type Session,
 } from "../contracts";
 import { api, createdJobSchema, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
 import { Results } from "./Results";
@@ -52,7 +52,7 @@ export function App() {
   const [metadataError, setMetadataError] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
   const deletedIds = useRef(new Set<string>());
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
   const [displayId, setDisplayId] = useState("");
@@ -101,7 +101,7 @@ export function App() {
     setHistoryState("loading");
     setError("");
     try {
-      const data = jobSchema.array().parse(await api.get("/api/jobs", signal ? { signal } : {}).json());
+      const data = jobSummarySchema.array().parse(await api.get("/api/jobs", signal ? { signal } : {}).json());
       if (signal?.aborted) return;
       setJobs((current) => data.reduce((items, job) => mergeJob(items, job, deletedIds.current), current));
       if (!workspaceChosen.current) {
@@ -135,7 +135,7 @@ export function App() {
         if (snapshotPending || disposed) return;
         snapshotPending = true;
         try {
-          const job = jobSchema.parse(await api.get(`/api/jobs/${id}`, { signal: controller.signal }).json());
+          const job = jobSummarySchema.parse(await api.get(`/api/jobs/${id}`, { signal: controller.signal }).json());
           if (disposed) return;
           setJobs((current) => mergeJob(current, job, deletedIds.current));
           if (!isActive(job)) source.close();
@@ -150,7 +150,7 @@ export function App() {
       source.onopen = () => { setStreamError(""); void snapshot(); };
       source.onmessage = (event) => {
         try {
-          const job = jobSchema.parse(JSON.parse(event.data));
+          const job = jobSummarySchema.parse(JSON.parse(event.data));
           if (job.id !== id) { source.close(); setStreamError("실시간 응답의 실행 ID가 일치하지 않습니다. 다시 연결하세요."); return; }
           setJobs((current) => mergeJob(current, job, deletedIds.current));
           if (!isActive(job)) source.close();
@@ -246,7 +246,7 @@ export function App() {
       setDisplayId(created.id);
       setView("analysis");
       workspaceChosen.current = true;
-      const job = jobSchema.parse(await api.get(`/api/jobs/${created.id}`).json());
+      const job = jobSummarySchema.parse(await api.get(`/api/jobs/${created.id}`).json());
       setJobs((current) => mergeJob(current, job, deletedIds.current));
     } catch (cause) {
       setError(await errorMessage(cause));
@@ -258,7 +258,7 @@ export function App() {
   async function cancelJob(id: string) {
     setCancelling(id); setError("");
     try {
-      const job = jobSchema.parse(await api.post(`/api/jobs/${id}/cancel`).json());
+      const job = jobSummarySchema.parse(await api.post(`/api/jobs/${id}/cancel`).json());
       setJobs((current) => mergeJob(current, job, deletedIds.current));
     } catch (cause) { setError(await errorMessage(cause)); }
     finally { setCancelling(""); }

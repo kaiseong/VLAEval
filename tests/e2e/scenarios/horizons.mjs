@@ -3,6 +3,7 @@ import { join } from "node:path";
 import index from "../../../index.html";
 import { jobSchema } from "../../../src/contracts";
 import { fixtureJob } from "../../fixtures/redesign/index.mjs";
+import { fixtureJobResponse } from "../../job-routes";
 
 const channels = fixtureJob("rby1-16").result.actionNames;
 const keyCodes = { Home: 36, ArrowDown: 40, Tab: 9 };
@@ -182,9 +183,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
     routes: { "/": index },
     async fetch(request) {
       const path = new URL(request.url).pathname;
-      const job = jobs.find((item) => path.endsWith(item.id));
-      const response = path === "/api/jobs" ? Response.json(jobs)
-        : path.startsWith("/api/jobs/") ? job ? Response.json(job) : Response.json({ error: "Not found" }, { status: 404 })
+      const response = path === "/api/jobs" || path.startsWith("/api/jobs/") ? fixtureJobResponse(new URL(request.url), jobs)
           : path === "/api/kinematics/profiles" ? Response.json({ profiles: [] })
             : new Response("Not found", { status: 404 });
       requests.push({ method: request.method, path, status: response.status });

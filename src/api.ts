@@ -6,6 +6,7 @@ import {
 } from "./contracts";
 import type { WorkerEvent } from "./contracts";
 import { isTerminal, JobError } from "./jobs";
+import { readJobRoute, summarizeJob } from "./job-summary";
 import type { JobStore } from "./jobs";
 import { RemoteError, runRemote } from "./remote";
 import type { RemoteRequest } from "./remote";
@@ -50,7 +51,7 @@ export function eventStream(request: Request, store: JobStore, id: string): Resp
       const send = () => {
         if (closed) return;
         const job = store.get(id);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(job)}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(summarizeJob(job))}\n\n`));
         if (isTerminal(job)) close();
       };
       cleanup = store.subscribe(id, send);
@@ -114,7 +115,9 @@ export function createApi(
       if (request.method === "GET" && profileMatch?.[1]) {
         return Response.json(await profiles.get(profileMatch[1]), { headers: { "Cache-Control": "no-store" } });
       }
-      if (url.pathname === "/api/jobs" && request.method === "GET") return Response.json(store.list());
+      // Summaries, per-episode data and downloads; whole stored runs (up to 400 MB each) are never sent.
+      const read = request.method === "GET" ? readJobRoute(url, store) : null;
+      if (read) return read;
       if (url.pathname === "/api/jobs/storage" && request.method === "GET") {
         return Response.json(await store.storage(), { headers: { "Cache-Control": "no-store" } });
       }
@@ -231,8 +234,8 @@ export function createApi(
           return new Response(null, { status: 204 });
         }
         if (match[2] === "/events" && request.method === "GET") return eventStream(request, store, id);
-        if (match[2] === "/cancel" && request.method === "POST") return Response.json(await store.requestCancel(id));
-        if (!match[2] && request.method === "GET") return Response.json(store.get(id));
+        if (match[2] === "/cancel" && request.method === "POST")
+          return Response.json(summarizeJob(await store.requestCancel(id)));
       }
       if (request.method !== "POST") return Response.json({ error: "경로를 찾을 수 없습니다." }, { status: 404 });
       switch (url.pathname) {

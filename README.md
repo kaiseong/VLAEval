@@ -125,6 +125,12 @@ ssh -o BatchMode=yes rtx6000@192.168.0.3 true
 - **Metadata & warnings**: host, 저장소, 체크포인트, 데이터셋, episode, seed, 추론
   step 수, stride, 최대 프레임 수, 지연 시간 중앙값과 p95, worker 경고를 담습니다.
 
+실행 목록과 실시간 갱신은 요약(전체 점수, EP별 개수와 점수)만 받습니다. 프레임별 값은
+EP를 고를 때 그 EP 것만 서버에서 받아 옵니다. chunk는 500개씩 나눠 받고, 받는 동안
+진행 바와 남은 시간을 보여 줍니다. 그동안 이전 EP 화면과 예측 설정은 그대로 남습니다.
+최근에 연 EP 3개는 페이지에 남겨 두어 다시 열 때 새로 받지 않습니다. 그래서 저장
+결과가 수백 MB인 실행도 목록이 열립니다(이전에는 목록 하나가 1 GB를 넘을 수 있었습니다).
+
 ## 프레임과 horizon coverage
 
 기본값 `stride=1`, `maxSamples=0`은 선택한 각 episode의 모든 관측 프레임
@@ -185,10 +191,12 @@ chunk 길이 H에서 미래 정답이 끝까지 남은 anchor는 `t=N-H`까지�
 
 원본 내보내기와 FK 파생 내보내기는 서로 다른 파일입니다.
 
-- `결과 JSON` → `vlaeval-<jobId>.json`: 저장된 결과를 그대로 씁니다.
+- `결과 JSON` → `vlaeval-<jobId>.json`: 저장된 결과를 서버가 그대로 내려 줍니다.
+  들여쓰기 없는 한 줄 JSON이며 내용은 이전 내보내기와 같습니다.
 - `전체 trace CSV` → `vlaeval-<jobId>.csv`: 열은
   `episode,frame,time_seconds,dimension,action,predicted,target,error`이며 저장된 모든
-  첫 스텝 프레임과 차원을 한 번씩 씁니다. 화면용으로 줄인 점이 아닙니다.
+  첫 스텝 프레임과 차원을 한 번씩 씁니다. 화면용으로 줄인 점이 아닙니다. 이 파일도
+  서버가 만들므로 지금 열지 않은 EP까지 모두 들어갑니다.
 - `Derived FK JSON` / `Derived FK CSV` → `vlaeval-<jobId>-ep<n>.fk.json` / `.fk.csv`:
   지금 선택과 정확히 일치하는 FK 계산이 끝났을 때만 활성화됩니다. job, episode,
   원본 프레임 ID, profile digest, URDF SHA256, 모델/리비전, root/tip, 선언한 단위와
@@ -264,6 +272,14 @@ FK는 관절 분석을 대체하지 않는 선택 기능이며 기본값은 꺼�
 
 - `src/client/`: 선택 UI, 진행 상태, 결과 그래프.
 - `src/api.ts`, `src/jobs.ts`: API, SSE, 단일 평가 실행, 결과 저장.
+- `src/job-summary.ts`: 저장 결과를 읽는 GET 경로. 전체 결과는 내려보내지 않습니다.
+
+  | 경로 | 내용 |
+  |---|---|
+  | `/api/jobs`, `/api/jobs/<id>` | 실행 요약 (SSE `/events`도 같은 요약) |
+  | `/api/jobs/<id>/episodes/<n>` | 그 EP의 첫 스텝 trace, 관절 관측값, chunk 개수 |
+  | `/api/jobs/<id>/episodes/<n>/samples?offset=&limit=` | 그 EP의 chunk, 한 번에 최대 500개 |
+  | `/api/jobs/<id>/result.json`, `/api/jobs/<id>/traces.csv` | 원본 내보내기 파일 |
 - `src/remote.ts`: 검증된 인수로 SSH 실행 및 worker 이벤트 수신.
 - `worker.py`: 기존 파일 탐색, config/episode 조회, OpenPi 추론과 오차 계산.
 - `src/client/results/`, `src/client/analysis/`, `src/client/charts/`: 결과 작업 공간,

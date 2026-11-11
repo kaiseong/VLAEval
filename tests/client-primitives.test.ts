@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { jobSchema } from "../src/contracts";
 import { Results } from "../src/client/Results";
+import { openedRun } from "./job-routes";
 import { Field, Section } from "../src/client/ui/primitives";
 import { resultFixture } from "./result-fixture";
 
@@ -43,7 +44,7 @@ test("result section renders through the shared primitive imports", () => {
     result: resultFixture,
     error: null,
   });
-  const markup = renderToStaticMarkup(createElement(Results, { job }));
+  const markup = renderToStaticMarkup(createElement(Results, { job: openedRun(job) }));
 
   expect(markup).toContain('class="result-stack"');
   expect(markup).toMatch(/<label class="field"><span>[^<]+<\/span><select\b/);

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import index from "../../index.html";
 import { evaluationFixture } from "../evaluation-fixture";
+import { fixtureJobResponse } from "../job-routes";
 
 type Page = { readonly evaluate: (script: string) => Promise<unknown> };
 type Harness = { readonly openPage: () => Promise<Page>; readonly close: () => Promise<unknown> };
@@ -27,11 +28,11 @@ async function state(page: Page, predicate: string, action = "") {
 test("separate results tab compares full chunks across models and all episodes", async () => {
   // Given two completed model runs and a failed run that must not be offered.
   const base = evaluationFixture(1), other = evaluationFixture(2, 2);
-  const failed = { ...evaluationFixture(3), status: "failed", result: null };
+  const failed = { ...evaluationFixture(3), status: "failed" as const, result: null };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": index },
     fetch(request) {
       const path = new URL(request.url).pathname;
-      if (path === "/api/jobs") return Response.json([base, other, failed]);
+      if (path.startsWith("/api/jobs")) return fixtureJobResponse(new URL(request.url), [base, other, failed]);
       if (path === "/api/kinematics/profiles") return Response.json({ profiles: [] });
       return new Response("Not found", { status: 404 });
     },

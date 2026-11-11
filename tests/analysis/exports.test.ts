@@ -4,10 +4,10 @@ import { fkResultSchema, type FkResult } from "../../src/kinematics/contracts";
 import {
   fkCsvExport,
   fkJsonExport,
-  rawJsonExport,
   rawTraceCsv,
   type FkExportRequest,
 } from "../../src/client/analysis/exports";
+import { resultJsonStream } from "../../src/job-summary";
 
 const jobId = "c9a7752e-74ba-4052-9ec1-ecbc8306d975";
 const profileHash = "a".repeat(64);
@@ -138,7 +138,7 @@ function parseCsv(input: string): string[][] {
   return rows;
 }
 
-test("raw JSON and all-frame CSV retain the original export semantics", () => {
+test("raw JSON and all-frame CSV retain the original export semantics", async () => {
   const original = structuredClone(resultFixture);
   const expectedRows = [
     "episode,frame,time_seconds,dimension,action,predicted,target,error",
@@ -150,7 +150,7 @@ test("raw JSON and all-frame CSV retain the original export semantics", () => {
     '"3","2","0.06666666666666667","1","left_arm_0","-0.1","0","-0.1"',
   ];
 
-  expect(JSON.parse(rawJsonExport(resultFixture))).toEqual(original);
+  expect(JSON.parse(await new Response(resultJsonStream(resultFixture)).text())).toEqual(original);
   expect(rawTraceCsv(resultFixture)).toBe(`\ufeff${expectedRows.join("\r\n")}`);
   expect(resultFixture).toEqual(original);
 });
@@ -206,7 +206,6 @@ test("missing, stale, mismatched, and unsupported FK refuse only derived exports
   expect(fkJsonExport(exportRequest(staleGeneration))).toBeNull();
   expect(fkCsvExport(exportRequest(wrongSource))).toBeNull();
   expect(fkJsonExport(exportRequest(unsupportedSchema))).toBeNull();
-  expect(rawJsonExport(resultFixture)).toBe(JSON.stringify(resultFixture, null, 2));
   expect(rawTraceCsv(resultFixture)).toContain('"3","2"');
 });
 

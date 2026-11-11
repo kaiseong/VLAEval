@@ -4,6 +4,7 @@ import index from "../../index.html";
 import { jobSchema } from "../../src/contracts";
 import { fkRequestSchema } from "../../src/kinematics/contracts";
 import { buildPredictionWorkerAsset } from "../../src/kinematics/worker-asset";
+import { fixtureJobResponse } from "../job-routes";
 
 type Page = {
   evaluate: (script: string) => Promise<unknown>;
@@ -46,8 +47,7 @@ for (const mode of ["joint", "fk"] as const) test(`${mode} detail keeps full chu
   const asset = await buildPredictionWorkerAsset();
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": index }, fetch(request) {
     const path = new URL(request.url).pathname;
-    if (path === "/api/jobs") return Response.json([job]);
-    if (path === `/api/jobs/${job.id}`) return Response.json(job);
+    if (path.startsWith("/api/jobs")) return fixtureJobResponse(new URL(request.url), [job]);
     if (path === "/api/kinematics/profiles") return Response.json({ profiles: [profile] });
     if (path === `/api/kinematics/profiles/${profile.profileHash}`) return Response.json(profile);
     if (path === "/assets/prediction.worker.js") return new Response(asset, { headers: { "content-type": "text/javascript" } });

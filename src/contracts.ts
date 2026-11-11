@@ -157,6 +157,49 @@ export const jobSchema = z.object({
   error: z.string().nullable(),
 });
 export type Job = z.infer<typeof jobSchema>;
+export type Result = NonNullable<Job["result"]>;
+const jointObservationsSchema = resultSchema.shape.jointObservations.unwrap();
+const traceSchema = resultSchema.shape.traces.element;
+/**
+ * What the job API sends for a run: every aggregate metric, without the per-frame arrays (traces, samples, joint
+ * observations), which reach 400 MB for a stride-1 run. Those are fetched per episode (episodeDataSchema and
+ * episodeSamplesSchema); the summary lists the episodes and carries the cross-episode values the browser used to
+ * derive from them.
+ */
+export const resultSummarySchema = resultSchema.omit({ traces: true, samples: true, jointObservations: true }).extend({
+  jointObservations: jointObservationsSchema.omit({ samples: true }).optional(),
+  /** Episodes with a trace or saved chunks, in the order the run stored them. */
+  episodes: z.array(z.object({
+    episode: z.number().int(), traceFrames: z.number().int().nonnegative(),
+    samples: z.number().int().nonnegative(), observations: z.number().int().nonnegative(),
+  })),
+  /** getEpisodeChunkMetrics on the full result. */
+  episodeChunkMetrics: z.array(z.object({
+    episode: z.number().int(), framesEvaluated: z.number().int(), validSteps: z.number().int().nullable(),
+    mae: metric.nullable(), mse: metric.nullable(), rmse: metric.nullable(), reason: z.string().nullable(),
+  })),
+  /** SHA-256 of the run-comparison keys (scored frames per episode, full-chunk valid masks) and the chunk count. */
+  comparison: z.object({
+    scoredFrames: z.string(), validMasks: z.string(), samples: z.number().int().nonnegative(),
+  }),
+});
+export type ResultSummary = z.infer<typeof resultSummarySchema>;
+export const jobSummarySchema = jobSchema.extend({ result: resultSummarySchema.nullable() });
+export type JobSummary = z.infer<typeof jobSummarySchema>;
+export const episodeDataSchema = z.object({
+  episode: z.number().int(),
+  trace: traceSchema.nullable(),
+  /** Null when the run recorded no joint observations. */
+  observations: jointObservationsSchema.shape.samples.nullable(),
+  samples: z.number().int().nonnegative(),
+});
+export type EpisodeData = z.infer<typeof episodeDataSchema>;
+export const maximumSamplesPage = 500;
+export const episodeSamplesSchema = z.object({
+  episode: z.number().int(), offset: z.number().int().nonnegative(), total: z.number().int().nonnegative(),
+  samples: resultSchema.shape.samples.max(maximumSamplesPage),
+});
+export type EpisodeSamples = z.infer<typeof episodeSamplesSchema>;
 export const jobStorageSchema = z.object({
   directory: pathSchema,
   totalBytes: z.number().int().nonnegative(),

@@ -7,6 +7,8 @@ import { JobStore } from "../../../src/jobs";
 import { ProfileCatalog } from "../../../src/kinematics/catalog";
 import { buildFkWorkerAsset } from "../../../src/kinematics/worker-asset";
 import { fixtureJob, fixtureJobs, transportResponse } from "../../fixtures/redesign/index.mjs";
+import { fixtureJobResponse } from "../../job-routes";
+import { recordServerDownloads } from "./server-downloads.mjs";
 
 const timeoutMs = 10_000;
 
@@ -202,11 +204,14 @@ async function legacyScenario({ args, outputPath, startHarness }) {
       URL.createObjectURL=blob=>{window.__task21Blobs.push({type:blob.type,text:blob.text(),bytes:blob.arrayBuffer().then(b=>Array.from(new Uint8Array(b)))});return create(blob)};
       return true;
     })()`);
+    await page.evaluate(recordServerDownloads);
     await click(page, '[data-export="json"]', actions);
+    await page.evaluate("window.__serverDownload");
     const jsonText = await page.evaluate("window.__task21Blobs.at(-1).text");
     addAssertion(assertions, "legacy-raw-json-deep-equals-source",
       JSON.stringify(JSON.parse(jsonText)) === JSON.stringify(source), { bytes: jsonText.length });
     await click(page, '[data-export="csv"]', actions);
+    await page.evaluate("window.__serverDownload");
     const csv = Buffer.from(await page.evaluate("window.__task21Blobs.at(-1).bytes")).toString("utf8");
     const [header, ...lines] = csv.replace(/^\ufeff/, "").split("\r\n");
     const rows = lines.map(line => (line.match(/"(?:[^"]|"")*"/g) ?? [])
@@ -294,10 +299,9 @@ async function malformedRecoveryScenario({ outputPath, startHarness }) {
         mode = body.mode;
         response = Response.json({ mode });
       } else if (url.pathname === "/api/jobs" && request.method === "GET") {
-        response = mode === "valid" ? Response.json([sourceJob]) : transportResponse(mode);
+        response = mode === "valid" ? fixtureJobResponse(url, [sourceJob]) : transportResponse(mode);
       } else if (url.pathname.startsWith("/api/jobs/") && request.method === "GET") {
-        const id = url.pathname.split("/").at(-1);
-        response = id === sourceJob.id ? Response.json(sourceJob) : Response.json({ error: "Not found" }, { status: 404 });
+        response = fixtureJobResponse(url, [sourceJob]);
       } else {
         response = new Response("Not found", { status: 404 });
       }
@@ -451,11 +455,8 @@ async function actualAppWorkerRace({ outputPath, startHarness }) {
         const url = new URL(request.url);
         let response;
         if (url.pathname === "/assets/fk.worker.js") response = new Response(workerAsset, { headers: { "content-type": "text/javascript" } });
-        else if (url.pathname === "/api/jobs") response = Response.json(jobs);
-        else if (url.pathname.startsWith("/api/jobs/")) {
-          const job = jobs.find(item => item.id === url.pathname.split("/").at(-1));
-          response = job ? Response.json(job) : Response.json({ error: "Not found" }, { status: 404 });
-        } else response = await api(request);
+        else if (url.pathname === "/api/jobs" || url.pathname.startsWith("/api/jobs/")) response = fixtureJobResponse(url, jobs);
+        else response = await api(request);
         http.push({ path: url.pathname, method: request.method, status: response.status, headers: Object.fromEntries(response.headers), body: await response.clone().text() });
         return response;
       },

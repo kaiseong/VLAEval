@@ -9,7 +9,7 @@ import { compiledProfileSchema } from "../../../src/kinematics/contracts";
 import { deriveForward } from "../../../src/kinematics/forward";
 import { buildFkView, fkPoseSeries } from "../../../src/client/analysis/fk-view";
 import { rotationError } from "../../../src/kinematics/math";
-import { currentFkExport, fkJsonExport, fkCsvExport, rawJsonExport, rawTraceCsv } from "../../../src/client/analysis/exports";
+import { currentFkExport, fkJsonExport, fkCsvExport, rawTraceCsv } from "../../../src/client/analysis/exports";
 import { fixtureSnapshot } from "./index.mjs";
 import "../../../src/client/styles.css";
 
@@ -17,7 +17,7 @@ export async function mount(element, props = {}) {
   const snapshot = fixtureSnapshot("fk-certified");
   const job = snapshot.jobs[0], template = snapshot.fkRequest;
   const result = job.result, trace = result.traces[0];
-  const rawBefore = { json: rawJsonExport(result), csv: rawTraceCsv(result) };
+  const rawBefore = { json: JSON.stringify(result, null, 2), csv: rawTraceCsv(result) };
   let profiles, profile = null;
   if (props.live) {
     const response = await fetch("/api/kinematics/profiles");
@@ -167,7 +167,7 @@ export async function mount(element, props = {}) {
   }
   element.addEventListener("click", (event) => state.events.push({ action: "click", trusted: event.isTrusted }));
   element.addEventListener("keydown", (event) => state.events.push({ action: "key", key: event.key, trusted: event.isTrusted }));
-  window.__FK_QA__ = { state, profiles, rawBefore, rawNow: () => ({ json: rawJsonExport(result), csv: rawTraceCsv(result) }),
+  window.__FK_QA__ = { state, profiles, rawBefore, rawNow: () => ({ json: JSON.stringify(result, null, 2), csv: rawTraceCsv(result) }),
     async complete() {
       const artifact = await currentFkExport(controller, "json");
       if (!artifact) throw new Error("No current complete result");

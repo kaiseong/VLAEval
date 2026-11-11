@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createApi } from "../../../src/api.ts";
 import { JobStore } from "../../../src/jobs.ts";
+import { recordServerDownloads } from "./server-downloads.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const archivedBaseURL = "http://127.0.0.1:4310";
@@ -571,6 +572,7 @@ async function installBlobRecorder(page) {
     };
     return true;
   })()`);
+  await page.evaluate(recordServerDownloads);
 }
 
 async function clickAndReadBlob(page, selector, actions) {
@@ -775,6 +777,7 @@ async function runArchivedLive({ args, outputPath, startHarness }) {
   let server = null;
   let sourceJob = null;
   let sourceBody = "";
+  let full = null;
   const cleanupErrors = [];
   await mkdir(outputPath, { recursive: true });
   try {
@@ -785,11 +788,13 @@ async function runArchivedLive({ args, outputPath, startHarness }) {
     assertion(assertions, "archived-live-http-job-is-completed",
       job.id === jobId && job.status === "completed" && job.error === null && job.result !== null,
       { id: job.id, status: job.status, error: job.error });
+    // The job route sends a summary; traces, exports and the seeded record use the stored result download.
     const result = job.result;
+    full = (await jsonRequest(`${originalBaseURL}/api/jobs/${jobId}/result.json`, httpRecords)).data;
     assertion(assertions, "archived-live-result-has-sixteen-action-channels",
       result.actionNames.length === 16
-      && result.traces.some((trace) => trace.episode === 0 && trace.frames.length > 0),
-      { actionNames: result.actionNames, traces: result.traces.map((trace) => ({ episode: trace.episode, frames: trace.frames.length })) });
+      && full.traces.some((trace) => trace.episode === 0 && trace.frames.length > 0),
+      { actionNames: result.actionNames, traces: full.traces.map((trace) => ({ episode: trace.episode, frames: trace.frames.length })) });
     const sourceEventsResponse = await fetch(`${originalBaseURL}/api/jobs/${jobId}/events`, {
       signal: AbortSignal.timeout(archivedTimeoutMs),
     });
@@ -820,11 +825,12 @@ async function runArchivedLive({ args, outputPath, startHarness }) {
 
     storeDirectory = await mkdtemp(join(tmpdir(), "vlaeval-task24-archived-runs-"));
     const ownedRecordPath = join(storeDirectory, `${jobId}.json`);
-    await Bun.write(ownedRecordPath, sourceBody);
+    const ownedRecord = JSON.stringify({ ...job, result: full });
+    await Bun.write(ownedRecordPath, ownedRecord);
     const copiedBody = await Bun.file(ownedRecordPath).text();
     assertion(assertions, "archived-record-is-byte-exact-copy-in-owned-store",
-      copiedBody === sourceBody && sha256(copiedBody) === sha256(sourceBody),
-      { ownedRecordPath, sourceSha256: sha256(sourceBody), ownedSha256: sha256(copiedBody) });
+      copiedBody === ownedRecord && sha256(copiedBody) === sha256(ownedRecord),
+      { ownedRecordPath, sourceSha256: sha256(ownedRecord), ownedSha256: sha256(copiedBody) });
     server = await startDedicatedServer(storeDirectory, actions);
     currentBaseURL = server.url;
     assertion(assertions, "archived-current-app-uses-dedicated-ephemeral-server-and-store",
@@ -898,7 +904,7 @@ async function runArchivedLive({ args, outputPath, startHarness }) {
           if (!inputTrust) throw new Error("Could not observe public source-frame input events");
           const caseProof = { viewport, theme, actions: [] };
           archivedCursorProof.cases.push(caseProof);
-          const trace = result.traces.find((item) => item.episode === 0);
+          const trace = full.traces.find((item) => item.episode === 0);
           if (!trace) throw new Error("Archived source is missing episode 0 trace");
           for (const sourceFrame of archivedCursorProof.expectedFrames) {
             if (!trace.frames.includes(sourceFrame)) {
@@ -1062,7 +1068,7 @@ async function runArchivedLive({ args, outputPath, startHarness }) {
             }
           }
           actions.outputPath = outputPath;
-          const exportHashes = await exportAndVerify(page, result, actions, assertions,
+          const exportHashes = await exportAndVerify(page, full, actions, assertions,
             `archived-${viewport}-${theme}`);
           await inspectModes(page, result, jobId, currentBaseURL, actions, assertions,
             `archived-${viewport}-${theme}`, httpRecords);
@@ -1508,7 +1514,8 @@ async function runRealSmoke({ outputPath, startHarness }) {
 
     const saved = await jsonRequest(`${server.url}/api/jobs/${runId}`, httpRecords);
     completedRecord = saved.data;
-    const trace = completedRecord.result?.traces.find((item) => item.episode === 0);
+    const savedResult = (await jsonRequest(`${server.url}/api/jobs/${runId}/result.json`, httpRecords)).data;
+    const trace = savedResult.traces.find((item) => item.episode === 0);
     const coverage = completedRecord.result?.coverage?.episodes.find((item) => item.episode === 0);
     assertion(assertions, "real-smoke-job-persisted-as-completed-in-owned-store",
       saved.response.status === 200 && completedRecord.status === "completed"
@@ -1547,10 +1554,10 @@ async function runRealSmoke({ outputPath, startHarness }) {
     let parsedRaw = null;
     try { parsedRaw = JSON.parse(rawJson.text); } catch {}
     assertion(assertions, "real-smoke-original-json-export-exact",
-      deepEqual(parsedRaw, completedRecord.result),
+      deepEqual(parsedRaw, savedResult),
       { sha256: sha256(rawJson.text), mediaType: rawJson.type });
     const rawCsv = await clickAndReadBlob(page, 'button[data-export="csv"]', actions);
-    const csvCheck = validateRawCsv(rawCsv.text, completedRecord.result);
+    const csvCheck = validateRawCsv(rawCsv.text, savedResult);
     assertion(assertions, "real-smoke-original-csv-export-every-source-value-exact",
       csvCheck.passed, { sha256: sha256(rawCsv.text), mediaType: rawCsv.type, ...csvCheck });
     const exportHashes = { rawJsonSha256: sha256(rawJson.text), rawCsvSha256: sha256(rawCsv.text) };
@@ -1607,12 +1614,12 @@ async function runRealSmoke({ outputPath, startHarness }) {
             const freshCsv = await clickAndReadBlob(page, 'button[data-export="csv"]', actions);
             let parsedJson = null;
             try { parsedJson = JSON.parse(freshJson.text); } catch {}
-            const csv = validateRawCsv(freshCsv.text, completedRecord.result);
+            const csv = validateRawCsv(freshCsv.text, savedResult);
             const newBlobIndices = freshJson.blobIndex > rawCsv.blobIndex
               && freshCsv.blobIndex > freshJson.blobIndex
               && !modeExportEvidence.some((item) =>
                 item.jsonBlobIndex === freshJson.blobIndex || item.csvBlobIndex === freshCsv.blobIndex);
-            const jsonValuesEqualSource = deepEqual(parsedJson, completedRecord.result);
+            const jsonValuesEqualSource = deepEqual(parsedJson, savedResult);
             const csvValuesEqualSource = csv.passed;
             const jsonBytesEqualBaseline = freshJson.text === rawJson.text;
             const csvBytesEqualBaseline = freshCsv.text === rawCsv.text;
