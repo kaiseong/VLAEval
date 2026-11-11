@@ -35,6 +35,7 @@ export type RemoteRequest = {
   readonly stride?: number;
   readonly seed?: number;
   readonly numSteps?: number;
+  readonly tensorrt?: boolean;
 };
 
 /** Remote interpreter for PyTorch checkpoints on `host` (env override, then target); `~` expands remotely. */

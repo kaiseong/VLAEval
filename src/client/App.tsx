@@ -5,7 +5,7 @@ import {
   configsSchema, connectionSchema, discoverySchema, discoverRequestSchema,
   episodesRequestSchema, episodesSchema, jobRequestSchema, jobSummarySchema, sessionSchema, type JobSummary, type Session,
 } from "../contracts";
-import { api, createdJobSchema, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
+import { api, computeLabel, createdJobSchema, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
 import { Results } from "./Results";
 import { EvaluationResults } from "./results/EvaluationResults";
 import { HistoryManager } from "./HistoryManager";
@@ -65,6 +65,7 @@ export function App() {
   const [maxSamples, setMaxSamples] = useState(0);
   const [seed, setSeed] = useState(0);
   const [numSteps, setNumSteps] = useState(10);
+  const [tensorrt, setTensorrt] = useState(false);
   const [episodeQuery, setEpisodeQuery] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState(savedUser);
@@ -73,6 +74,8 @@ export function App() {
   const active = jobs.filter(isActive);
   const locked = active.length > 0 || Boolean(busy) || historyState !== "ready";
   const displayed = jobs.find((job) => job.id === displayId);
+  // TensorRT is offered only where the target builds engines; a choice made for Thor is not sent elsewhere.
+  const useTensorrt = tensorrt && Boolean(targetFor(settings.host)?.tensorrt);
   const activeIds = active.map((job) => job.id).sort().join(",");
 
   useEffect(() => {
@@ -240,7 +243,7 @@ export function App() {
   async function startJob() {
     setBusy("submit"); setError("");
     try {
-      const request = jobRequestSchema.parse({ ...settings, config, episodes: selected, stride, maxSamples, seed, numSteps });
+      const request = jobRequestSchema.parse({ ...settings, config, episodes: selected, stride, maxSamples, seed, numSteps, tensorrt: useTensorrt });
       const created = createdJobSchema.parse(await api.post("/api/jobs", { json: request }).json());
       // The backend owns timestamps/status; do not create a synthetic history item.
       setDisplayId(created.id);
@@ -282,7 +285,7 @@ export function App() {
       <WorkspaceNav view={view} onChange={(next) => { workspaceChosen.current = true; setView(next); }} />
       <Field label="실행 기록"><select id="history" value={displayId} onChange={(event) => { setDisplayId(event.target.value); if (view !== "evaluation") setView("analysis"); workspaceChosen.current = true; }}>
         <option value="">실행을 선택하세요</option>
-        {jobs.map((job) => <option key={job.id} value={job.id}>{job.request.config} · {statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")}{job.owner ? ` · ${job.owner.name}` : ""}</option>)}
+        {jobs.map((job) => <option key={job.id} value={job.id}>{job.request.config}{computeLabel(job.request)} · {statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")}{job.owner ? ` · ${job.owner.name}` : ""}</option>)}
       </select></Field>
       <button disabled={historyState === "loading"} onClick={() => void loadHistory()} aria-label="기록 새로고침"><RefreshCw size={16} aria-hidden="true" />{historyState === "loading" ? "불러오는 중…" : "새로고침"}</button>
       <HistoryManager jobs={jobs} session={session} onDeleted={(id) => {
@@ -302,7 +305,7 @@ export function App() {
       {view === "preparation" && discovery && <div className="notice"><strong>탐색 완료</strong><p>저장소 {discovery.repositories.length} · 체크포인트 {discovery.checkpoints.length} · 데이터셋 {discovery.datasets.length}</p>{discovery.warnings.length > 0 && <details><summary>탐색 주의사항 {discovery.warnings.length}개</summary><div className="warning-list" tabIndex={0} role="region" aria-label="탐색 주의사항">{discovery.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div></details>}</div>}
       {streamError && <div className="notice" role="status"><p>{streamError}</p><button onClick={() => { setStreamError(""); setStreamVersion((value) => value + 1); }}><RefreshCw size={16} aria-hidden="true" />다시 연결</button></div>}
       {active.map((job) => <section className="run-progress panel" key={job.id} aria-label="진행 중인 평가">
-        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id || !ownsJob(session, job)} {...(ownsJob(session, job) ? {} : { title: `${ownerLabel(job)}님이 실행 중인 평가입니다.` })} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
+        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}{computeLabel(job.request)}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id || !ownsJob(session, job)} {...(ownsJob(session, job) ? {} : { title: `${ownerLabel(job)}님이 실행 중인 평가입니다.` })} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
         <progress aria-label="평가 진행률" value={job.progress.completed} max={Math.max(1, job.progress.total)} />
         <p className="mono" role="status">{job.progress.completed.toLocaleString()} / {job.progress.total.toLocaleString()} 프레임</p>
       </section>)}
@@ -331,6 +334,10 @@ export function App() {
                 disabled={locked} onSelect={(path) => updateSettings("checkpoint", path)} />}
               <Field label="체크포인트 경로" hint="목록에서 선택하면 자동 입력됩니다. 절대 경로를 직접 입력할 수도 있습니다."><input className="mono" list="checkpoints" value={settings.checkpoint} onChange={(event) => updateSettings("checkpoint", event.target.value)} placeholder="/…/checkpoints/…" spellCheck={false} /></Field>
               <datalist id="checkpoints">{discovery?.checkpoints.map((item) => <option key={item.path} value={item.path}>{item.format} · step {item.step ?? "미상"}</option>)}</datalist>
+              {targetFor(settings.host)?.tensorrt && <Field label="계산 방식" hint="TensorRT는 체크포인트 폴더 engine/ 안의 .engine 파일 하나로 계산합니다. PyTorch 체크포인트만 되며, 추론 스텝 수가 엔진을 만들 때와 같아야 합니다.">
+                <select id="compute-mode" value={tensorrt ? "tensorrt" : "pytorch"} onChange={(event) => setTensorrt(event.target.value === "tensorrt")}>
+                  <option value="pytorch">PyTorch</option><option value="tensorrt">TensorRT</option>
+                </select></Field>}
             </Section>
             <Section number="02" title="데이터셋" subtitle="LeRobot 데이터셋을 지정하고 에피소드 메타데이터를 읽습니다.">
               {view === "preparation" && <ArtifactPicker kind="datasetui" host={settings.host} value={settings.dataset}
@@ -360,7 +367,7 @@ export function App() {
               <Field label="추론 스텝 수"><input type="number" min={1} max={100} value={numSteps} onChange={(event) => setNumSteps(event.target.valueAsNumber)} /></Field>
             </div></details>
           </Section>
-          <div className="launch-bar"><div><strong>{stride === 1 && maxSamples === 0 ? "선택 에피소드의 모든 프레임 평가" : "사용자 지정 샘플링으로 평가"}</strong><p>{selected.length ? `${selected.length}개 에피소드 · 원본 ${selectedFrames.toLocaleString()} 프레임` : "모델, 데이터셋, 에피소드를 먼저 선택하세요."}</p></div><button className="primary" type="submit" disabled={!prepared || locked}><Play size={17} aria-hidden="true" />평가 시작</button></div>
+          <div className="launch-bar"><div><strong>{stride === 1 && maxSamples === 0 ? "선택 에피소드의 모든 프레임 평가" : "사용자 지정 샘플링으로 평가"}{computeLabel({ tensorrt: useTensorrt })}</strong><p>{selected.length ? `${selected.length}개 에피소드 · 원본 ${selectedFrames.toLocaleString()} 프레임` : "모델, 데이터셋, 에피소드를 먼저 선택하세요."}</p></div><button className="primary" type="submit" disabled={!prepared || locked}><Play size={17} aria-hidden="true" />평가 시작</button></div>
         </fieldset>
       </form>
       {locked && <p className="muted">{active.length ? "진행 중인 평가가 있어 요청 설정이 잠겨 있습니다. 결과와 실행 기록은 계속 확인할 수 있습니다." : historyState !== "ready" ? "저장된 실행 상태를 확인한 뒤 새 평가를 시작할 수 있습니다." : "현재 요청이 끝나면 설정을 변경할 수 있습니다."}</p>}

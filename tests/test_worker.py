@@ -178,7 +178,7 @@ def test_episode_listing_when_v3_returns_error(tmp_path):
 
 @pytest.mark.parametrize("field,value", [
     ("episodes", []), ("episodes", [True]), ("stride", 0), ("maxSamples", -1),
-    ("repo", "relative"), ("seed", -1), ("numSteps", 0),
+    ("repo", "relative"), ("seed", -1), ("numSteps", 0), ("tensorrt", 1),
 ])
 def test_request_when_invalid_rejects_at_boundary(field, value):
     # Given
@@ -199,6 +199,17 @@ def test_request_when_defaults_cover_full_episodes():
     # Then
     assert (parsed.max_samples, parsed.stride, parsed.seed, parsed.num_steps) == (0, 1, 0, 10)
     assert parsed.episodes == (2, 0)
+    assert parsed.tensorrt is False
+
+
+def test_request_when_tensorrt_chosen_reaches_runtime_payload():
+    # Given
+    raw = {"operation": "evaluate", "repo": "/repo", "dataset": "/data",
+           "checkpoint": "/checkpoint", "config": "test", "episodes": [0], "tensorrt": True}
+    # When: main() re-encodes the request for the model runtime.
+    payload = json.loads(base64.b64decode(worker.Request.decode(encoded(raw)).encoded()))
+    # Then
+    assert payload["tensorrt"] is True
 
 
 def test_metrics_when_chunks_padded_weight_valid_rows():
@@ -750,6 +761,27 @@ def test_v3_adapter_when_selected_data_missing_rejects(v3_root, scoring_objects)
     # When / Then
     with pytest.raises(RuntimeError):
         dataset[2]
+
+
+def test_tensorrt_engine_needs_one_engine_and_its_exported_steps(tmp_path):
+    engine_for = runtime["tensorrt_engine"]
+    with pytest.raises(RuntimeError, match="PyTorch"):
+        engine_for(tmp_path, 10)
+    (tmp_path / "model.safetensors").write_bytes(b"")
+    with pytest.raises(RuntimeError, match="찾은 파일: 없음"):
+        engine_for(tmp_path, 10)
+    (tmp_path / "engine").mkdir()
+    engine = tmp_path / "engine" / "model_fp16.engine"
+    engine.write_bytes(b"")
+    path, warning = engine_for(tmp_path, 10)
+    assert path == engine and "onnx_fp16.log" in warning
+    (tmp_path / "onnx_fp16.log").write_text("  Precomputed 10 folded adarms_cond constants (shape (1, 1024))\n")
+    assert engine_for(tmp_path, 10) == (engine, None)
+    with pytest.raises(RuntimeError, match="10 step"):
+        engine_for(tmp_path, 5)
+    (tmp_path / "engine" / "model_fp8.engine").write_bytes(b"")
+    with pytest.raises(RuntimeError, match="model_fp16.engine, model_fp8.engine"):
+        engine_for(tmp_path, 10)
 
 
 def test_mask_dtype_switch_sets_the_model_field_or_leaves_old_configs():

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { jobStorageSchema } from "../contracts";
 import type { JobSummary, Session } from "../contracts";
-import { api, errorMessage, isActive, ownerLabel, ownsJob, statusLabels } from "./api";
+import { api, computeLabel, errorMessage, isActive, ownerLabel, ownsJob, statusLabels } from "./api";
 import "./history-manager.css";
 
 const bytesLabel = (bytes: number | null) => {
@@ -126,7 +126,7 @@ export function HistoryManager({ jobs, session, onDeleted }: {
                 const checked = event.currentTarget.checked;
                 setSelected((current) => checked ? [...current, job.id] : current.filter((id) => id !== job.id));
               }} />
-            <span><strong>{job.request.config}</strong>
+            <span><strong>{job.request.config}{computeLabel(job.request)}</strong>
               <small>{statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")} · {job.id.slice(0, 8)}{job.owner ? ` · ${ownerLabel(job)}` : ""}</small>
               <small className="path">{job.request.checkpoint}</small>
               {!enabled && <small>{isActive(job) ? "실행 중 · 삭제 불가" : !mine ? "다른 사람의 기록 · 삭제 불가" : "저장 상태 확인 후 삭제 가능"}</small>}

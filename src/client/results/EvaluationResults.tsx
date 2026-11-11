@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { JobSummary } from "../../contracts";
+import { computeLabel } from "../api";
 import { Field, Section } from "../ui/primitives";
 import { formatMetric, metricLabels, metricMse } from "../analysis/metrics";
 import { comparisonDifferences, comparisonDifferenceLabels, isCompletedEvaluation } from "../analysis/run-comparison";
@@ -8,7 +9,7 @@ import "./evaluation-results.css";
 
 const checkpointName = (job: CompletedEvaluation) => job.result.checkpoint.split("/").filter(Boolean).slice(-2).join("/");
 const runLabel = (job: CompletedEvaluation) =>
-  `${job.result.config} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
+  `${job.result.config}${computeLabel(job.request)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
 
 export function EvaluationResults({ jobs, selectedId, onSelect }: {
   readonly jobs: readonly JobSummary[];

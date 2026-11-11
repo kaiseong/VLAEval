@@ -185,6 +185,7 @@ function EpisodeWorkspace({ job, result, episode, toolbar }: {
       <dl><dt>Created</dt><dd>{new Date(job.createdAt).toLocaleString("ko-KR")}</dd>
         <dt>Host / repository</dt><dd className="path">{job.request.host} / {job.request.repo}</dd>
         <dt>Checkpoint</dt><dd className="path">{result.checkpoint}</dd><dt>Dataset</dt><dd className="path">{result.dataset}</dd>
+        {job.request.tensorrt && <><dt>TensorRT engine</dt><dd className="path">{result.tensorrtEngine ?? "—"}</dd></>}
         <dt>Episodes</dt><dd>{job.request.episodes.join(", ")}</dd><dt>Seed / inference steps / stride</dt><dd>{result.seed} / {result.numSteps} / {job.request.stride}</dd>
         <dt>Maximum frames</dt><dd>{job.request.maxSamples === 0 ? "All" : job.request.maxSamples}</dd>
         <dt>Latency median / p95</dt><dd>{format(result.latencyMs.median)} / {format(result.latencyMs.p95)} ms</dd></dl>

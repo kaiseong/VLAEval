@@ -35,6 +35,8 @@ export const jobRequestSchema = connectionSchema.extend({
   stride: z.number().int().min(1).max(100000).default(1),
   seed: z.number().int().min(0).max(2147483647).default(0),
   numSteps: z.number().int().min(1).max(100).default(10),
+  /** Compute with the TensorRT engine in `<checkpoint>/engine/` (targets with `tensorrt` only), not the checkpoint runtime. */
+  tensorrt: z.boolean().default(false),
 });
 export type JobRequest = z.infer<typeof jobRequestSchema>;
 const metric = z.number().finite().nonnegative();
@@ -127,6 +129,8 @@ export const resultSchema = z.object({
     predicted: z.array(z.array(z.number().finite())),
     target: z.array(z.array(z.number().finite())), valid: z.array(z.boolean()),
   })),
+  /** Engine file a TensorRT run used; absent for runs on the checkpoint's own runtime. */
+  tensorrtEngine: z.string().optional(),
   warnings: z.array(z.string()),
 });
 export const progressSchema = z.object({

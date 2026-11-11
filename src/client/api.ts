@@ -27,6 +27,11 @@ export function ownsJob(session: Session | null, job: JobState): boolean {
   return session === null || session.local || job.owner?.ip === session.ip;
 }
 
+/** " · TensorRT" for runs computed with a TensorRT engine, "" otherwise; appended to run labels. */
+export function computeLabel(request: { readonly tensorrt: boolean }): string {
+  return request.tensorrt ? " · TensorRT" : "";
+}
+
 export function ownerLabel(job: JobState): string {
   return job.owner ? `${job.owner.name} (${job.owner.ip})` : "";
 }

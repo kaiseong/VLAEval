@@ -53,6 +53,7 @@ class Request:
     datasetui_container: str = "datasetui-api-1"
     datasetui_root: str = "/mnt/datasetui-nas/DatasetUI"
     pytorch_python: str = ""
+    tensorrt: bool = False
 
     @classmethod
     def decode(cls, encoded: str) -> Request:
@@ -99,6 +100,9 @@ class Request:
         if not isinstance(pytorch_python, str) or "\0" in pytorch_python or (
                 pytorch_python and not Path(os.path.expanduser(pytorch_python)).is_absolute()):
             raise WorkerError("pytorchPython must be an absolute interpreter path (or start with ~).")
+        tensorrt = raw.get("tensorrt", False)
+        if type(tensorrt) is not bool:
+            raise WorkerError("tensorrt must be true or false.")
         if operation in {"configs", "evaluate"} and not paths["repo"]:
             raise WorkerError("An absolute OpenPi repo is required.")
         if operation in {"episodes", "evaluate"} and not paths["dataset"]:
@@ -108,7 +112,7 @@ class Request:
         return cls(operation, paths["repo"], tuple(roots), paths["dataset"], config,
                    paths["checkpoint"], tuple(dict.fromkeys(episodes)), values["maxSamples"],
                    values["stride"], values["seed"], values["numSteps"], container, datasetui_root,
-                   os.path.expanduser(pytorch_python) if pytorch_python else "")
+                   os.path.expanduser(pytorch_python) if pytorch_python else "", tensorrt)
 
     def encoded(self) -> str:
         raw = {
@@ -117,7 +121,7 @@ class Request:
             "maxSamples": self.max_samples, "stride": self.stride, "seed": self.seed,
             "numSteps": self.num_steps,
             "datasetuiContainer": self.datasetui_container, "datasetuiRoot": self.datasetui_root,
-            "pytorchPython": self.pytorch_python,
+            "pytorchPython": self.pytorch_python, "tensorrt": self.tensorrt,
         }
         return base64.b64encode(json.dumps(raw).encode()).decode()
 
@@ -370,6 +374,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import signal
@@ -474,6 +479,27 @@ def checkpoint_root(value):
     if not path.is_dir() or not ((path / "model.safetensors").is_file() or (path / "params").is_dir()):
         raise RuntimeError("Checkpoint must contain model.safetensors or params/; select an individual trained step.")
     return path
+
+
+def tensorrt_engine(checkpoint, num_steps):
+    """The TensorRT mode's engine: the one `.engine` file in <checkpoint>/engine/, plus a warning when the export log
+    next to the checkpoint does not record its denoising steps. The engine runs the steps it was exported with
+    (pytorch_to_onnx.py --num_steps) whatever numSteps says, so a recorded mismatch is an error."""
+    if not (checkpoint / "model.safetensors").is_file():
+        raise RuntimeError("TensorRT 계산은 PyTorch 체크포인트(model.safetensors)에서만 할 수 있습니다.")
+    engines = sorted((checkpoint / "engine").glob("*.engine"))
+    if len(engines) != 1:
+        found = ", ".join(path.name for path in engines) or "없음"
+        raise RuntimeError(f"{checkpoint / 'engine'}에 TensorRT 엔진(.engine)이 하나만 있어야 합니다. 찾은 파일: {found}")
+    log = checkpoint / f"onnx_{engines[0].stem.removeprefix('model_')}.log"
+    pattern = r"Precomputed (\d+) folded adarms_cond constants"
+    steps = re.findall(pattern, log.read_text(errors="replace")) if log.is_file() else []
+    if not steps:
+        return engines[0], (f"{log.name}에서 TensorRT 엔진의 denoising step 수를 찾지 못했습니다. 엔진은 export 때 정한 "
+                            f"step 수로 계산하며, 결과의 추론 스텝 {num_steps}은 요청값입니다.")
+    if int(steps[-1]) != num_steps:
+        raise RuntimeError(f"TensorRT 엔진은 {steps[-1]} step으로 export했습니다({log.name}). 추론 스텝 수를 {steps[-1]}로 맞추세요.")
+    return engines[0], None
 
 
 def select_frames(episodes, request):
@@ -908,8 +934,16 @@ def run(request):
         raise RuntimeError("Model exceeds evaluator safety caps: horizon <= 256 and actionDim <= 256.")
     dataset = load_dataset(request, data, selected.model.action_horizon)
     checkpoint = checkpoint_root(request["checkpoint"])
+    # Checked before the model loads (about a minute on Thor), so a missing or mismatched engine fails fast.
+    engine, engine_warning = tensorrt_engine(checkpoint, request["numSteps"]) if request.get("tensorrt") else (None, None)
     policy = create_trained_policy(selected, checkpoint, sample_kwargs={"num_steps": request["numSteps"]})
-    if builtin_mask_fix and getattr(policy, "_is_pytorch_model", False):
+    if engine:
+        # The deployment path: the engine replaces sample_actions (the PyTorch layers are freed), as on the robot.
+        sys.path.append(str(repo))
+        from deployment_scripts.trt_model_forward import setup_pi0_tensorrt_engine
+        policy = setup_pi0_tensorrt_engine(policy, str(engine))
+        print(f"VLAEval: TensorRT engine {engine}", flush=True)
+    elif builtin_mask_fix and getattr(policy, "_is_pytorch_model", False):
         print(f"VLAEval: attention mask dtype fix {'on' if mask_fix else 'off'} (Pi0Config.pytorch_mask_compute_dtype)",
               flush=True)
     elif mask_fix and getattr(policy, "_is_pytorch_model", False):
@@ -917,6 +951,10 @@ def run(request):
     result = score_frames(dataset, policy, data, selected.model, request, request["metadata"]["episodes"])
     result.update({key: request[key] for key in ("config", "dataset", "seed", "numSteps")})
     result.update({"checkpoint": str(checkpoint), "fps": float(dataset.meta.fps)})
+    if engine:
+        result["tensorrtEngine"] = str(engine)
+        if engine_warning:
+            result["warnings"].append(engine_warning)
     emit({"type": "result", "result": result})
 
 

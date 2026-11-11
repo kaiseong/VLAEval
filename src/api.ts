@@ -124,6 +124,8 @@ export function createApi(
       if (url.pathname === "/api/jobs" && request.method === "POST") {
         const input = jobRequestSchema.parse(await request.json());
         allow(input);
+        if (input.tensorrt && !targetFor(input.host)?.tensorrt)
+          throw new JobError("TensorRT 계산은 TensorRT를 지원하는 평가 서버(Thor)에서만 할 수 있습니다.", 400);
         const job = await store.start(input, peer.local && userName(request) === null ? undefined : requireOwner(request, peer));
         return Response.json({ id: job.id }, { status: 201 });
       }

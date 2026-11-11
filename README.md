@@ -96,6 +96,19 @@ ssh -o BatchMode=yes rtx6000@192.168.0.3 true
 6. 상단 **결과 분석** 탭에서 저장된 실행을 엽니다. 완료된 실행은 로컬 `.runs/`에
    저장되며, 같은 화면에서 다시 열 수 있습니다. 아래 "결과 분석 화면"을 참고하세요.
 
+**TensorRT 계산 (Thor)**: 평가 서버가 Thor이면 모델 단계에 `계산 방식 [PyTorch | TensorRT]`이
+보입니다. TensorRT는 체크포인트 폴더의 `engine/` 안에 있는 `.engine` 파일 하나를 써서, 로봇
+배포와 같은 경로(`deployment_scripts/trt_model_forward.py`의 `setup_pi0_tensorrt_engine`)로
+계산합니다. 엔진은 Thor에서 `deployment_scripts/thor_tensorrt.sh`로 만듭니다.
+
+- PyTorch 체크포인트(`model.safetensors`)만 됩니다. `engine/`에 엔진이 없거나 둘 이상이면
+  모델을 불러오기 전에 오류로 멈춥니다.
+- 엔진은 export할 때 정한 denoising step 수로 계산합니다. 체크포인트 옆
+  `onnx_<정밀도>.log`에 기록된 step 수가 `추론 스텝 수`와 다르면 오류로 멈추고, 기록이
+  없으면 결과 경고에 남깁니다.
+- 결과 Metadata에 사용한 엔진 경로가, 실행 목록과 비교 목록에는 `· TensorRT`가 붙습니다.
+- 엔진은 FP16으로 계산하므로 같은 프레임에서도 PyTorch 결과와 조금 다릅니다.
+
 처음 모델을 로딩하거나 JAX를 컴파일할 때는 진행률이 잠시 움직이지 않을 수 있습니다.
 단일 GPU에서 중복 모델 로딩을 피하기 위해 앱은 평가를 한 번에 하나만 실행합니다.
 

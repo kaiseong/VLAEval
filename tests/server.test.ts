@@ -7,7 +7,7 @@ import { jobRequestSchema, resultSchema, openpiCheckpointsRequestSchema, dataset
 import type { Job } from "../src/contracts";
 import { isTerminal, JobStore } from "../src/jobs";
 import { consumeLines, openpiPythonSelector, quoteShell, sshCommand, workerCommand } from "../src/remote";
-import { targetFor } from "../src/targets";
+import { remoteTargets, targetFor } from "../src/targets";
 import { resultFixture } from "./result-fixture";
 
 const directories: string[] = [];
@@ -271,6 +271,31 @@ describe("HTTP boundaries", () => {
     }));
     expect(response.status).toBe(403);
     expect(started).toBe(false);
+  });
+
+  test("TensorRT runs only on a target that offers it, checked before any remote work", async () => {
+    const gate = Promise.withResolvers<void>();
+    const store = new JobStore(await makeDirectory(), async (_request, emit) => {
+      await gate.promise;
+      emit({ type: "cancelled" });
+    });
+    await store.initialize();
+    const api = createApi(store);
+    const post = (body: unknown) => api(new Request("http://localhost:4310/api/jobs", { method: "POST", body: JSON.stringify(body) }));
+    expect(request.tensorrt).toBe(false);
+    const rejected = await post({ ...request, tensorrt: true });
+    expect(rejected.status).toBe(400);
+    expect(((await rejected.json()) as { error: string }).error).toContain("Thor");
+    expect(store.list()).toEqual([]);
+    const thor = remoteTargets.find((target) => target.tensorrt);
+    if (!thor) throw new Error("A TensorRT target is required");
+    const accepted = await post({ ...request, host: thor.host, repo: thor.repo, tensorrt: true });
+    expect(accepted.status).toBe(201);
+    const { id } = (await accepted.json()) as { id: string };
+    expect(store.get(id).request.tensorrt).toBe(true);
+    const finished = terminal(store, id);
+    gate.resolve();
+    await finished;
   });
 
   test("invalid episode selection returns 400 before any remote work", async () => {
