@@ -366,6 +366,7 @@ RUNTIME_SOURCE: Final = r'''
 import base64
 import copy
 import ctypes
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -431,11 +432,20 @@ def pyav_decode_video_frames(video_path, timestamps, tolerance_s, backend=None):
     return torch.from_numpy(np.ascontiguousarray(frames)).to(torch.float32) / 255
 
 
+def mask_dtype_switch(selected, enabled):
+    """pi05_rby1 main builds the bf16 attention mask in the model, switched by Pi0Config.pytorch_mask_compute_dtype.
+    Returns the config with that switch set to `enabled` and True, or the config unchanged and False for older
+    checkouts without the field, which need install_mask_dtype_fix instead."""
+    if not hasattr(selected.model, "pytorch_mask_compute_dtype"):
+        return selected, False
+    return replace(selected, model=replace(selected.model, pytorch_mask_compute_dtype=enabled)), True
+
+
 def install_mask_dtype_fix(model):
-    """On by default (VLAEVAL_MASK_DTYPE_FIX=0 turns it off): cast the additive attention mask to the attention
-    compute dtype. Newer torch.compile lowers pi05 attention to efficient SDPA, which rejects pi0_pytorch's float32
-    mask next to bf16 queries ("invalid dtype for bias"); on x86 the compiled output also stays closer to eager.
-    Same patch as openpi.serving.pytorch_runtime, which the pi05_rby1 ZMQ server always installs."""
+    """Runtime patch for pi05_rby1 checkouts without Pi0Config.pytorch_mask_compute_dtype (before 2026-11-11): cast
+    the additive attention mask to the attention compute dtype. Newer torch.compile lowers pi05 attention to efficient
+    SDPA, which rejects pi0_pytorch's float32 mask next to bf16 queries ("invalid dtype for bias"); on x86 the
+    compiled output also stays closer to eager."""
     import torch
     cls = type(model)
     if not hasattr(cls, "_prepare_attention_masks_4d") or getattr(cls, "_vlaeval_mask_dtype_fix", False):
@@ -889,7 +899,8 @@ def run(request):
                           for c in config._CONFIGS]})
         return
     from openpi.policies.policy_config import create_trained_policy
-    selected = config.get_config(request["config"])
+    mask_fix = os.environ.get("VLAEVAL_MASK_DTYPE_FIX", "1") != "0"
+    selected, builtin_mask_fix = mask_dtype_switch(config.get_config(request["config"]), mask_fix)
     data = selected.data.create(selected.assets_dirs, selected.model)
     if data.rlds_data_dir or len(data.action_sequence_keys) != 1:
         raise RuntimeError("Evaluation supports one LeRobot action sequence, not RLDS or combined action keys.")
@@ -898,7 +909,10 @@ def run(request):
     dataset = load_dataset(request, data, selected.model.action_horizon)
     checkpoint = checkpoint_root(request["checkpoint"])
     policy = create_trained_policy(selected, checkpoint, sample_kwargs={"num_steps": request["numSteps"]})
-    if os.environ.get("VLAEVAL_MASK_DTYPE_FIX", "1") != "0" and getattr(policy, "_is_pytorch_model", False):
+    if builtin_mask_fix and getattr(policy, "_is_pytorch_model", False):
+        print(f"VLAEval: attention mask dtype fix {'on' if mask_fix else 'off'} (Pi0Config.pytorch_mask_compute_dtype)",
+              flush=True)
+    elif mask_fix and getattr(policy, "_is_pytorch_model", False):
         install_mask_dtype_fix(policy._model)
     result = score_frames(dataset, policy, data, selected.model, request, request["metadata"]["episodes"])
     result.update({key: request[key] for key in ("config", "dataset", "seed", "numSteps")})

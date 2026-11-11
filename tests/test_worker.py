@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+from dataclasses import dataclass
 import importlib.util
 import json
 import os
@@ -749,3 +750,19 @@ def test_v3_adapter_when_selected_data_missing_rejects(v3_root, scoring_objects)
     # When / Then
     with pytest.raises(RuntimeError):
         dataset[2]
+
+
+def test_mask_dtype_switch_sets_the_model_field_or_leaves_old_configs():
+    @dataclass(frozen=True)
+    class Model:
+        pytorch_mask_compute_dtype: bool = True
+
+    @dataclass(frozen=True)
+    class Train:
+        model: object
+
+    selected, builtin = runtime["mask_dtype_switch"](Train(Model()), False)
+    assert builtin
+    assert selected.model.pytorch_mask_compute_dtype is False
+    old = Train(SimpleNamespace(action_dim=16))
+    assert runtime["mask_dtype_switch"](old, True) == (old, False)
