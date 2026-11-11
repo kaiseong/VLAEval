@@ -50,11 +50,10 @@ VLAEVAL_RUNS_DIR=/mnt/nas-public/vlaeval_runs bun run start
   `/mnt/datasetui-nas`(읽기 전용)를 같은 경로로 마운트하고 `--pid=host`로 띄우므로 PID·취소·경로가
   호스트와 같습니다. 이미지의 LeRobot 0.3/torchvision 0.27 차이는 worker가 처리합니다
   (`lerobot.datasets` import, torchvision `VideoReader`가 없으면 같은 규칙의 PyAV 디코더 사용).
-- Thor의 torch.compile은 bf16 query와 float32 attention mask를 거부하므로 launcher가
-  `VLAEVAL_MASK_DTYPE_FIX=1`로 mask를 계산 dtype으로 바꿉니다(Thor 배포의 `install_attention_mask_dtype_fix`와 같음).
-  끄려면 Thor에서 `VLAEVAL_MASK_DTYPE_FIX=0`.
-- Thor 저장소는 rtx6000 `~/kgs/pi05_rby1`(574a4b7 + 미커밋 config.py)의 사본이고, `data_loader.py`의
-  LeRobot import만 두 경로를 모두 받도록 바꿨습니다. `transformers_replace`가 바뀌면 이미지를 다시 빌드합니다:
+- PyTorch 체크포인트는 모든 평가 서버에서 attention mask를 계산 dtype으로 바꿔 평가합니다(기본 켬, 끄려면
+  `VLAEVAL_MASK_DTYPE_FIX=0`). Thor의 torch.compile은 bf16 query와 float32 mask를 거부하고, rtx6000에서도
+  켜야 compile 결과가 eager에 가깝습니다. pi05_rby1 ZMQ 서버의 `install_attention_mask_dtype_fix`와 같은 패치입니다.
+- Thor 저장소는 pi05_rby1 `main`입니다(2026-11-11부터). `transformers_replace`가 바뀌면 이미지를 다시 빌드합니다:
   `docker build -t openpi-pi0.5:vlaeval -f ~/kgs/vlaeval.Dockerfile ~/kgs/pi05_rby1/src/openpi/models_pytorch/transformers_replace`
 - Thor의 JAX 체크포인트 평가와 attention 진단은 확인하지 않았습니다. 진단은 지금도 rtx6000 전용입니다.
 

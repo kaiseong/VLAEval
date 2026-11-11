@@ -432,9 +432,10 @@ def pyav_decode_video_frames(video_path, timestamps, tolerance_s, backend=None):
 
 
 def install_mask_dtype_fix(model):
-    """Opt-in (VLAEVAL_MASK_DTYPE_FIX=1, set by the Thor launcher): cast the additive attention mask to the attention
+    """On by default (VLAEVAL_MASK_DTYPE_FIX=0 turns it off): cast the additive attention mask to the attention
     compute dtype. Newer torch.compile lowers pi05 attention to efficient SDPA, which rejects pi0_pytorch's float32
-    mask next to bf16 queries ("invalid dtype for bias"); same patch as the Thor deployment's trt_model_forward.py."""
+    mask next to bf16 queries ("invalid dtype for bias"); on x86 the compiled output also stays closer to eager.
+    Same patch as openpi.serving.pytorch_runtime, which the pi05_rby1 ZMQ server always installs."""
     import torch
     cls = type(model)
     if not hasattr(cls, "_prepare_attention_masks_4d") or getattr(cls, "_vlaeval_mask_dtype_fix", False):
@@ -447,7 +448,7 @@ def install_mask_dtype_fix(model):
 
     cls._prepare_attention_masks_4d = prepare
     cls._vlaeval_mask_dtype_fix = True
-    print("VLAEval: attention mask dtype fix installed (VLAEVAL_MASK_DTYPE_FIX=1)", flush=True)
+    print("VLAEval: attention mask dtype fix installed (VLAEVAL_MASK_DTYPE_FIX=0 to disable)", flush=True)
 
 
 def lerobot_decoder(module):
@@ -897,7 +898,7 @@ def run(request):
     dataset = load_dataset(request, data, selected.model.action_horizon)
     checkpoint = checkpoint_root(request["checkpoint"])
     policy = create_trained_policy(selected, checkpoint, sample_kwargs={"num_steps": request["numSteps"]})
-    if os.environ.get("VLAEVAL_MASK_DTYPE_FIX") == "1" and getattr(policy, "_is_pytorch_model", False):
+    if os.environ.get("VLAEVAL_MASK_DTYPE_FIX", "1") != "0" and getattr(policy, "_is_pytorch_model", False):
         install_mask_dtype_fix(policy._model)
     result = score_frames(dataset, policy, data, selected.model, request, request["metadata"]["episodes"])
     result.update({key: request[key] for key in ("config", "dataset", "seed", "numSteps")})
