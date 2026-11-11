@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Job } from "../../contracts";
 import { Section } from "../ui/primitives";
+import { formatMetric as format, metricLabels, metricMse } from "../analysis/metrics";
 
 type Result = NonNullable<Job["result"]>;
 type MetricTab = "episode" | "dimension" | "horizon";
@@ -11,9 +12,6 @@ export interface MetricTablesProps {
   readonly onMetricTabChange: (tab: MetricTab) => void;
 }
 
-const format = (value: number | null) => value === null
-  ? "—" : value.toLocaleString("ko-KR", { maximumFractionDigits: 6 });
-
 export function MetricTables({ result, metricTab, onMetricTabChange }: MetricTablesProps) {
   let caption: string;
   let headings: readonly string[];
@@ -21,25 +19,25 @@ export function MetricTables({ result, metricTab, onMetricTabChange }: MetricTab
   switch (metricTab) {
     case "episode":
       caption = "에피소드별 오차 · 첫 action 기준";
-      headings = ["에피소드", "평가 프레임", "MAE", "RMSE"];
+      headings = ["에피소드", "평가 프레임", metricLabels.mae, metricLabels.mse, metricLabels.rmse];
       rows = result.perEpisode.map((item) => <tr key={item.episode}>
         <th scope="row">EP {item.episode}</th><td>{item.framesEvaluated.toLocaleString("ko-KR")}</td>
-        <td>{format(item.mae)}</td><td>{format(item.rmse)}</td>
+        <td>{format(item.mae)}</td><td>{format(metricMse(item.mse, item.rmse))}</td><td>{format(item.rmse)}</td>
       </tr>);
       break;
     case "dimension":
       caption = "액션 차원별 전체 청크 오차";
-      headings = ["액션 차원", "MAE", "RMSE"];
+      headings = ["액션 차원", metricLabels.mae, metricLabels.mse, metricLabels.rmse];
       rows = result.perDimension.map((item, index) => <tr key={index}>
-        <th scope="row">{item.name}</th><td>{format(item.mae)}</td><td>{format(item.rmse)}</td>
+        <th scope="row">{item.name}</th><td>{format(item.mae)}</td><td>{format(metricMse(item.mse, item.rmse))}</td><td>{format(item.rmse)}</td>
       </tr>);
       break;
     case "horizon":
       caption = "Horizon별 전체 청크 오차 · 유효 비교가 없으면 —";
-      headings = ["Horizon 스텝", "유효 개수", "MAE", "RMSE"];
+      headings = ["Horizon 스텝", "유효 개수", metricLabels.mae, metricLabels.mse, metricLabels.rmse];
       rows = result.perHorizon.map((item) => <tr key={item.step}>
         <th scope="row">{item.step}</th><td>{item.count.toLocaleString("ko-KR")}</td>
-        <td>{format(item.mae)}</td><td>{format(item.rmse)}</td>
+        <td>{format(item.mae)}</td><td>{format(metricMse(item.mse, item.rmse))}</td><td>{format(item.rmse)}</td>
       </tr>);
       break;
     default: {

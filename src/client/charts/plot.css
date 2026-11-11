@@ -33,7 +33,10 @@
 .trace-plot__predicted path, .trace-plot__target path { stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .trace-plot__target path { stroke-dasharray: 6 4; }
 .trace-plot__cursor { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 3; }
+.trace-plot__hover { stroke: var(--ink); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .trace-plot__band { fill: var(--secondary); }
+.trace-plot__brush { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.trace-plot--zoomable svg { touch-action: pan-y pinch-zoom; user-select: none; }
 .trace-plot__legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); margin-block: var(--s2); color: var(--muted); }
 .trace-plot__legend span { display: inline-flex; align-items: center; gap: var(--s2); }
 .trace-plot__legend i { display: inline-block; width: 20px; border-top: 2px solid var(--accent); }

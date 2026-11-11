@@ -1,13 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, PointerEvent } from "react";
 import { sampleRenderGeometry } from "../analysis/render-sampling";
 import type { RenderSamplingInput, RenderSamplingResult } from "../analysis/render-sampling";
 import type { FrameWindow } from "../analysis/series";
 import { fkFrameIndex } from "../analysis/fk-view";
+import { BRUSH_MIN_PX, brushWindow, canZoom, isZoomed, panWindow, wheelPixels } from "./time-zoom";
 import type { FkView } from "../analysis/fk-protocol";
 import "./plot.css";
 
 export type TracePlotSeries = RenderSamplingInput & { readonly fps: number };
+export type TraceHover = { readonly frame: number; readonly clientX: number; readonly clientY: number };
 export type TracePlotLabels = {
   readonly title: string;
   readonly unit: string;
@@ -21,6 +23,7 @@ export type TracePlotProps = {
   readonly onFrameSelect: (frame: number) => void;
   readonly compact?: boolean;
   readonly detail?: boolean;
+  readonly showLegend?: boolean;
   readonly wrapThreshold?: number;
   /** Optional geometry supplied by the owning workspace for this window. */
   readonly geometry?: RenderSamplingResult;
@@ -28,15 +31,23 @@ export type TracePlotProps = {
   readonly boundedView?: FkView["channels"][number];
   /** Extra display-only trajectories (e.g. predicted action chunks) drawn over the series. */
   readonly overlays?: readonly TraceOverlay[];
+  readonly hoverFrame?: number | null;
+  readonly onFrameHover?: (point: TraceHover) => void;
+  /** Bounds of drag-to-zoom and wheel panning; both props together enable them. */
+  readonly fullWindow?: FrameWindow;
+  readonly onWindowChange?: (window: FrameWindow) => void;
+  /** Called when a zoom drag starts, so the owner can hide its hover card. */
+  readonly onHoverClear?: () => void;
 };
 
 export type TraceOverlay = {
   readonly key: string;
   readonly color: string;
+  readonly label?: string;
   readonly emphasized?: boolean;
   /** Ground-truth reference drawn dashed in the GT color. */
   readonly reference?: boolean;
-  readonly points: readonly { readonly frame: number; readonly value: number }[];
+  readonly points: readonly { readonly frame: number; readonly value: number; readonly breakBefore?: boolean }[];
 };
 
 type LayoutOptions = {
@@ -45,6 +56,7 @@ type LayoutOptions = {
   readonly yDomain: readonly [number, number] | null;
   readonly width: number;
   readonly height: number;
+  readonly compact?: boolean;
   readonly wrapThreshold?: number;
   readonly geometry?: RenderSamplingResult;
   readonly boundedView?: FkView["channels"][number];
@@ -76,12 +88,19 @@ export function tracePlotGeometry(options: LayoutOptions) {
   const left = 88;
   const right = Math.max(left + 1, width - 16);
   // Keep the unit caption above the top tick at the readable overview font size.
-  const top = 48;
-  const bottom = height - 60;
-  const sampled = options.boundedView?.geometry ?? options.geometry ?? sampleRenderGeometry(visible, {
+  const top = options.compact ? 40 : 48;
+  const bottom = height - (options.compact ? 52 : 60);
+  const sampledSeries = options.boundedView?.geometry ?? options.geometry ?? sampleRenderGeometry(visible, {
     pixelWidth: Math.max(1, Math.floor(right - left)),
     ...(options.wrapThreshold === undefined ? {} : { wrapThreshold: options.wrapThreshold }),
   });
+  // A zoomed chunk tail can have raw overlay values but no scored first-step rows.
+  const sampled: RenderSamplingResult = sampledSeries.kind === "empty"
+    && options.overlays?.some((overlay) => overlay.points.some((point) =>
+      point.frame >= window.startFrame && point.frame <= window.endFrame && Number.isFinite(point.value)))
+    ? { kind: "ready", bucketCount: 0, vertexCount: 0, sourceIndices: [],
+      predicted: { segments: [] }, target: { segments: [] }, unavailableBands: [] }
+    : sampledSeries;
   switch (sampled.kind) {
     case "empty":
       return { kind: "empty" } as const;
@@ -150,7 +169,7 @@ const timeAxisValue = (value: number, significantDigits: number) => {
 export function TracePlot(props: TracePlotProps) {
   const { series, sourceFrame, window, yDomain, labels, onFrameSelect } = props;
   const compact = props.compact === true && props.detail !== true;
-  const height = compact ? 160 : 340;
+  const height = compact ? 192 : 340;
   const timeDigits = window.startFrame === window.endFrame ? 3
     : Math.min(21, Math.max(3, Math.floor(Math.log10(2 * window.endFrame / (window.endFrame - window.startFrame))) + 2));
   const [width, setWidth] = useState(360);
@@ -168,12 +187,12 @@ export function TracePlot(props: TracePlotProps) {
     return () => observer.disconnect();
   }, []);
   const layout = useMemo(() => tracePlotGeometry({
-    series, window, yDomain, width, height,
+    series, window, yDomain, width, height, compact,
     ...(props.wrapThreshold === undefined ? {} : { wrapThreshold: props.wrapThreshold }),
     ...(props.geometry === undefined ? {} : { geometry: props.geometry }),
     ...(props.boundedView === undefined ? {} : { boundedView: props.boundedView }),
     ...(props.overlays === undefined ? {} : { overlays: props.overlays }),
-  }), [series, window, yDomain, width, height, props.wrapThreshold, props.geometry, props.boundedView, props.overlays]);
+  }), [series, window, yDomain, width, height, compact, props.wrapThreshold, props.geometry, props.boundedView, props.overlays]);
   // Use the displayed interval (including Worker-supplied domains), not source rows.
   // Normalized subtraction avoids overflow for opposite extreme endpoints.
   const yScale = layout.kind === "ready" ? Math.max(Math.abs(layout.min), Math.abs(layout.max)) || 1 : 1;
@@ -195,7 +214,101 @@ export function TracePlot(props: TracePlotProps) {
   const index = frames[position] === sourceFrame ? position : -1;
   const rawIndex = sourceFrame === null ? -1 : fkFrameIndex(series.frames, sourceFrame);
   const selected = index >= 0 && sourceFrame !== null;
+  const zoomBase = props.onWindowChange ? props.fullWindow : undefined;
+  const zoomable = zoomBase !== undefined && canZoom(zoomBase) && layout.kind === "ready";
+  const zoomed = zoomBase !== undefined && isZoomed(window, zoomBase);
+  // Brush in viewBox x (1 unit = 1 CSS px: the viewBox width is the measured width).
+  const [brush, setBrush] = useState<{ readonly x0: number; readonly x1: number } | null>(null);
+  const drag = useRef<{ readonly id: number; readonly x0: number; x1: number | null } | null>(null);
+  const suppressClick = useRef(false);
+  const plotX = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+    const matrix = svg.getScreenCTM();
+    return matrix ? new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse()).x : null;
+  };
+  const frameAtX = (x: number) => layout.kind !== "ready" ? NaN
+    : window.startFrame + (x - layout.left) / (layout.right - layout.left) * (window.endFrame - window.startFrame);
+  const startBrush = (event: PointerEvent<SVGSVGElement>) => {
+    suppressClick.current = false;
+    if (!zoomable || layout.kind !== "ready" || event.button !== 0) return;
+    const x = plotX(event.currentTarget, event.clientX, event.clientY);
+    if (x === null || x < layout.left || x > layout.right) return;
+    drag.current = { id: event.pointerId, x0: x, x1: null };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveBrush = (event: PointerEvent<SVGSVGElement>) => {
+    const current = drag.current;
+    if (!current || current.id !== event.pointerId || layout.kind !== "ready") return;
+    const x = plotX(event.currentTarget, event.clientX, event.clientY);
+    if (x === null) return;
+    const x1 = Math.max(layout.left, Math.min(layout.right, x));
+    if (current.x1 === null && Math.abs(x1 - current.x0) < BRUSH_MIN_PX) return;
+    if (current.x1 === null) props.onHoverClear?.();
+    current.x1 = x1;
+    setBrush({ x0: current.x0, x1 });
+  };
+  const endBrush = (event: PointerEvent<SVGSVGElement>) => {
+    const current = drag.current;
+    if (!current || current.id !== event.pointerId) return;
+    drag.current = null;
+    setBrush(null);
+    if (current.x1 === null || !zoomBase || !props.onWindowChange) return;
+    suppressClick.current = true;
+    const next = brushWindow(frameAtX(current.x0), frameAtX(current.x1), zoomBase);
+    if (next) props.onWindowChange(next);
+  };
+  const cancelBrush = () => {
+    // A cancelled drag must not turn into a frame selection when the button is released.
+    if (drag.current?.x1 != null) suppressClick.current = true;
+    drag.current = null;
+    setBrush(null);
+  };
+  // Wheel pans a zoomed window. A native non-passive listener is needed to keep the page from scrolling.
+  // Plot width from the measured width (same gutters as tracePlotGeometry), valid even for an empty window.
+  const wheel = useRef({ window, zoomBase, onWindowChange: props.onWindowChange, plotWidth: 1, remainder: 0 });
+  wheel.current = { ...wheel.current, window, zoomBase, onWindowChange: props.onWindowChange,
+    plotWidth: Math.max(1, width - 16 - 88) };
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (event: WheelEvent) => {
+      const state = wheel.current;
+      if (event.ctrlKey || !state.zoomBase || !state.onWindowChange || !isZoomed(state.window, state.zoomBase)) return;
+      event.preventDefault();
+      const span = state.window.endFrame - state.window.startFrame;
+      // Trackpads send a few px per event: carry the fractional frames until they add up to one.
+      const frames = state.remainder + wheelPixels(event, state.plotWidth) / state.plotWidth * span;
+      const whole = Math.trunc(frames);
+      state.remainder = frames - whole;
+      if (whole === 0) return;
+      const next = panWindow(state.window, state.zoomBase, whole);
+      if (next === state.window) { state.remainder = 0; return; }
+      state.window = next;  // successive events before the next render build on this one
+      state.onWindowChange(next);
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, []);
+  const inspectPointer = (event: PointerEvent<SVGSVGElement>) => {
+    if (!props.onFrameHover || layout.kind !== "ready") return;
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    if (point.x < layout.left || point.x > layout.right || point.y < layout.top || point.y > layout.bottom) return;
+    const fraction = (point.x - layout.left) / (layout.right - layout.left);
+    const frame = Math.max(Math.ceil(window.startFrame), Math.min(Math.floor(window.endFrame),
+      Math.round(window.startFrame + fraction * (window.endFrame - window.startFrame))));
+    if (frame > window.endFrame) return;
+    props.onFrameHover({ frame, clientX: event.clientX, clientY: event.clientY });
+  };
   const selectKey = (event: KeyboardEvent<SVGSVGElement>) => {
+    if (event.key === "Escape" && drag.current) { event.preventDefault(); event.stopPropagation(); cancelBrush(); return; }
+    if ((event.key === "PageUp" || event.key === "PageDown") && zoomed && zoomBase && props.onWindowChange) {
+      event.preventDefault();
+      const half = Math.max(1, Math.round((window.endFrame - window.startFrame) / 2));
+      const next = panWindow(window, zoomBase, event.key === "PageDown" ? half : -half);
+      if (next !== window) props.onWindowChange(next);
+      return;
+    }
     let next: number;
     switch (event.key) {
       case "ArrowRight":
@@ -208,24 +321,32 @@ export function TracePlot(props: TracePlotProps) {
     }
     event.preventDefault();
     const frame = frames[next];
-    if (frame !== undefined) onFrameSelect(frame);
+    if (frame !== undefined) {
+      onFrameSelect(frame);
+      const rect = event.currentTarget.getBoundingClientRect();
+      props.onFrameHover?.({ frame, clientX: rect.right, clientY: rect.top });
+    }
   };
   const valueText = selected
     ? `Frame ${sourceFrame} · ${(sourceFrame / series.fps).toFixed(3)} s`
     : "Selected frame unavailable in this window";
-  return <figure className={`trace-plot ${compact ? "trace-plot--compact" : "trace-plot--detail"}`}
+  return <figure className={`trace-plot ${compact ? "trace-plot--compact" : "trace-plot--detail"}${zoomable ? " trace-plot--zoomable" : ""}`}
     data-source-frame={sourceFrame ?? "unavailable"} data-window-start={window.startFrame}
-    data-window-end={window.endFrame} data-unit={labels.unit}
+    data-window-end={window.endFrame} data-unit={labels.unit} data-zoomed={zoomBase ? zoomed : undefined}
     data-axis-offset={axisOffset} data-axis-scale={axisScale}>
     <figcaption id={`${id}-title`}><strong>{labels.title}</strong><span>{labels.unit}</span></figcaption>
-    {!compact && <div className="trace-plot__legend"><span><i />Prediction (solid)</span><span><i />GT (dashed)</span></div>}
+    {!compact && props.showLegend !== false && <div className="trace-plot__legend"><span><i />Prediction (solid)</span><span><i />GT (dashed)</span></div>}
     <svg ref={svgRef} viewBox={`0 0 ${width} ${axisHeight}`} height={axisHeight}
       style={stackedTimeAxis ? { height: axisHeight } : undefined}
-      role={frames.length ? "slider" : "img"} tabIndex={frames.length ? 0 : undefined}
+      role={frames.length ? "slider" : "img"} tabIndex={frames.length || props.onFrameHover ? 0 : undefined}
       aria-labelledby={`${id}-title`} aria-describedby={`${id}-help${sharedAxis ? ` ${id}-axis` : ""}`}
       aria-valuemin={frames[0]} aria-valuemax={frames.at(-1)}
       aria-valuenow={selected ? sourceFrame : undefined} aria-valuetext={valueText}
+      onPointerMove={(event) => { if (drag.current?.x1 == null) inspectPointer(event); moveBrush(event); }}
+      onPointerDown={(event) => { inspectPointer(event); startBrush(event); }}
+      onPointerUp={endBrush} onPointerCancel={cancelBrush} onLostPointerCapture={cancelBrush}
       onKeyDown={selectKey} onClick={(event) => {
+        if (suppressClick.current) { suppressClick.current = false; return; }
         if (layout.kind !== "ready" || !frames.length) return;
         event.currentTarget.focus();
         const matrix = event.currentTarget.getScreenCTM();
@@ -247,8 +368,9 @@ export function TracePlot(props: TracePlotProps) {
           : later === undefined || desired - earlier <= later - desired ? earlier : later;
         if (frame !== undefined) onFrameSelect(frame);
       }}>
-      <title>{`${labels.title} (${labels.unit})`}</title>
-      <desc id={`${id}-help`}>Prediction is solid; GT is dashed. Click to inspect an original frame. Use arrow keys, Home or End. Time is in seconds.</desc>
+      {!props.onFrameHover && <title>{`${labels.title} (${labels.unit})`}</title>}
+      <desc id={`${id}-help`}>Prediction is solid; GT is dashed. Click to inspect an original frame. Use arrow keys, Home or End. Time is in seconds.{zoomable
+        ? " Drag across the plot to zoom in on that time span. When zoomed, the mouse wheel or Page Up / Page Down moves the span earlier or later." : ""}</desc>
       {layout.kind === "ready" ? <>
         {(layout.min === layout.max ? [0.5] : [0, 0.5, 1]).map((fraction) => {
           const value = layout.min * (1 - fraction) + layout.max * fraction;
@@ -270,22 +392,36 @@ export function TracePlot(props: TracePlotProps) {
           {props.overlays.map((overlay) => {
             const points = overlay.points.filter((p) => p.frame >= window.startFrame && p.frame <= window.endFrame && Number.isFinite(p.value));
             if (!points.length) return null;
-            return <path key={overlay.key} data-overlay={overlay.key} fill="none"
+            return <g key={overlay.key}><path data-overlay={overlay.key} fill="none"
               {...(overlay.reference ? {} : { stroke: overlay.color })}
               className={["trace-plot__overlay", overlay.emphasized ? "trace-plot__overlay--emphasized" : "",
                 overlay.reference ? "trace-plot__overlay--reference" : ""].filter(Boolean).join(" ")}
-              d={points.map((p, i) => `${i ? "L" : "M"}${layout.x(p.frame)},${layout.y(p.value)}`).join(" ")} />;
+              d={points.map((p, i) => `${i && !p.breakBefore ? "L" : "M"}${layout.x(p.frame)},${layout.y(p.value)}`).join(" ")}>
+              {overlay.label && !props.onFrameHover && <title>{overlay.label}</title>}
+            </path>
+              {points.filter((point, index) => (index === 0 || point.breakBefore)
+                && (index === points.length - 1 || points[index + 1]?.breakBefore)).map((point) =>
+                <circle key={point.frame} data-overlay-point={overlay.key} data-source-frame={point.frame}
+                  cx={layout.x(point.frame)} cy={layout.y(point.value)} r={3}
+                  fill={overlay.reference ? "var(--target)" : overlay.color} />)}
+            </g>;
           })}
         </g>}
         {(["predicted", "target"] as const).map((name) => <g key={name} className={`trace-plot__${name}`}>
           {layout.paths[name].map((segment, segmentIndex) => <g key={segmentIndex}
             data-source-frame-start={segment[0]?.frame} data-source-frame-end={segment.at(-1)?.frame}>
+            {!props.onFrameHover && <title>{name === "target" ? "GT (정답 궤적) · 점선" : "예측 궤적 · 실선"}</title>}
             <path fill="none" d={segment.map((v, i) => `${i ? "L" : "M"}${layout.x(v.frame)},${layout.y(v.value)}`).join(" ")} />
             {segment.length === 1 && segment[0] && <circle data-source-frame={segment[0].frame} cx={layout.x(segment[0].frame)} cy={layout.y(segment[0].value)} r={3} />}
           </g>)}
         </g>)}
+        {brush && <rect className="trace-plot__brush" data-brush x={Math.min(brush.x0, brush.x1)} y={layout.top}
+          width={Math.abs(brush.x1 - brush.x0)} height={layout.bottom - layout.top} />}
         {selected && <line className="trace-plot__cursor" data-source-frame={sourceFrame}
           x1={layout.x(sourceFrame)} x2={layout.x(sourceFrame)} y1={layout.top} y2={layout.bottom} />}
+        {props.hoverFrame != null && props.hoverFrame >= window.startFrame && props.hoverFrame <= window.endFrame
+          && <line className="trace-plot__hover" data-hover-frame={props.hoverFrame}
+            x1={layout.x(props.hoverFrame)} x2={layout.x(props.hoverFrame)} y1={layout.top} y2={layout.bottom} />}
       </> : <text x={width / 2} y={height / 2} textAnchor="middle">{layout.kind === "empty" ? "No valid samples" : "Invalid chart data"}</text>}
     </svg>
     {sharedAxis && <p id={`${id}-axis`} className="trace-plot__notice" data-axis-equation>
@@ -293,7 +429,7 @@ export function TracePlot(props: TracePlotProps) {
     </p>}
     {layout.kind === "ready" && layout.sampled.unavailableBands.length > 0 && <p className="trace-plot__notice">Gap density unavailable · zoom in</p>}
     <p className="trace-plot__inspection" data-selection-status={selected ? "available" : "unavailable"}>{valueText}
-      {!compact && selected && <> · Prediction {displayValue(series.predicted[rawIndex])} · GT {displayValue(series.target[rawIndex])} {labels.unit}</>}
+      {!compact && selected && !props.onFrameHover && <> · Prediction {displayValue(series.predicted[rawIndex])} · GT {displayValue(series.target[rawIndex])} {labels.unit}</>}
     </p>
   </figure>;
 }

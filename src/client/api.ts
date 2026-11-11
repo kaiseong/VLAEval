@@ -1,8 +1,32 @@
 import ky, { HTTPError } from "ky";
 import { z } from "zod";
-import { jobSchema, type Job } from "../contracts";
+import { jobSchema, type Job, type Session } from "../contracts";
 
-export const api = ky.create({ retry: 0, timeout: 180000 });
+const userKey = "vlaeval.user";
+export function savedUser(): string {
+  try { return localStorage.getItem(userKey) ?? ""; } catch { return ""; }
+}
+export function saveUser(name: string): void {
+  try { localStorage.setItem(userKey, name.trim()); } catch { /* Name is then asked again next visit. */ }
+}
+
+/** The typed name rides on every request so LAN runs record who started them. */
+export const api = ky.create({
+  retry: 0, timeout: 180000,
+  hooks: { beforeRequest: [(request) => {
+    const name = savedUser().trim();
+    if (name) request.headers.set("x-vlaeval-user", encodeURIComponent(name));
+  }] },
+});
+
+/** Runs this browser may delete or cancel: all on this PC, otherwise the ones started from this IP. */
+export function ownsJob(session: Session | null, job: Job): boolean {
+  return session === null || session.local || job.owner?.ip === session.ip;
+}
+
+export function ownerLabel(job: Job): string {
+  return job.owner ? `${job.owner.name} (${job.owner.ip})` : "";
+}
 export const createdJobSchema = z.object({ id: jobSchema.shape.id });
 
 export async function errorMessage(error: unknown): Promise<string> {
@@ -22,7 +46,8 @@ export const statusLabels = {
   queued: "대기 중", running: "평가 중", completed: "완료", failed: "실패", cancelled: "취소됨",
 } as const;
 
-export function mergeJob(jobs: Job[], incoming: Job): Job[] {
+export function mergeJob(jobs: Job[], incoming: Job, deletedIds?: ReadonlySet<string>): Job[] {
+  if (deletedIds?.has(incoming.id)) return jobs;
   const previous = jobs.find((job) => job.id === incoming.id);
   // A reconnect snapshot may arrive after a newer SSE update.
   if (previous && ((!isActive(previous) && isActive(incoming)) ||

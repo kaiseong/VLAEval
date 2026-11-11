@@ -1,5 +1,17 @@
 export async function buildFkWorkerAsset(): Promise<Blob> {
-  const workerPath = new URL("../client/analysis/fk.worker.ts", import.meta.url).pathname;
+  return buildWorkerAsset("../client/analysis/fk.worker.ts");
+}
+
+export async function buildFkOverviewWorkerAsset(): Promise<Blob> {
+  return buildWorkerAsset("../client/analysis/fk-overview.worker.ts");
+}
+
+export async function buildPredictionWorkerAsset(): Promise<Blob> {
+  return buildWorkerAsset("../client/analysis/prediction.worker.ts");
+}
+
+async function buildWorkerAsset(path: string): Promise<Blob> {
+  const workerPath = new URL(path, import.meta.url).pathname;
   const build = await Bun.build({
     target: "browser",
     entrypoints: [workerPath],

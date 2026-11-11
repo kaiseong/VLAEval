@@ -47,3 +47,11 @@ test("a stale history refresh cannot revive a cancelled job", () => {
   expect(mergeJob([cancelled], running).filter(isActive)).toEqual([]);
   expect(mergeJob([cancelled], running)[0]?.status).toBe("cancelled");
 });
+
+test("a late snapshot cannot resurrect a deleted terminal record", () => {
+  const completed: Job = { ...running, status: "completed", result: resultFixture };
+  const deletedIds = new Set([completed.id]);
+  expect(mergeJob([], completed, deletedIds)).toEqual([]);
+  const other = { ...completed, id: "e4a6a5b0-51ce-4313-8b8d-9b3f19a4c827" };
+  expect(mergeJob([], other, deletedIds)).toEqual([other]);
+});

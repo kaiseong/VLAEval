@@ -255,7 +255,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
     await click(page, '#prepare .preparation-grid section:nth-child(2) button'); await settled(page);
     await click(page, '.episode-row input');
     await check(page, "explicit-episode-selected", "document.querySelector('.episode-row input').checked");
-    await click(page, '.workspace-nav button:last-child');
+    await click(page, '.workspace-nav button[aria-controls="results"]');
     await click(page, '.workspace-nav button:first-child');
     await check(page, "switching-preserves-preparation", "document.querySelector('input[list=\"checkpoints\"]').value==='/qa/chosen-checkpoint' && document.querySelector('input[list=\"datasets\"]').value==='/qa/chosen-dataset' && document.querySelector('.episode-row input').checked");
     await capture(page, "preparation-preserved");
@@ -357,7 +357,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
         await arm(page, `document.documentElement.dataset.theme===${JSON.stringify(theme)}`);
         await choose(page, '.rail-footer select', theme === "light" ? 1 : 2); await settled(page);
         await arm(page, "!document.querySelector('#results').hidden");
-        await click(page, '.workspace-nav button:last-child'); await settled(page);
+        await click(page, '.workspace-nav button[aria-controls="results"]'); await settled(page);
         await check(page, `analysis-no-overflow-${viewport}-${theme}`, "document.documentElement.scrollWidth<=innerWidth && document.querySelector('#prepare').hidden");
         await capture(page, `analysis-${viewport}-${theme}`);
         await page.evaluate("(()=>{const main=document.querySelector('main');main.scrollTop=main.scrollHeight;window.scrollTo(0,document.body.scrollHeight)})()");
@@ -372,7 +372,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
     }
     await click(page, '.workspace-nav button:first-child');
     await key(page, "Tab");
-    await check(page, "keyboard-focuses-analysis-navigation", "document.activeElement===document.querySelector('.workspace-nav button:last-child') && document.activeElement.matches(':focus-visible')");
+    await check(page, "keyboard-focuses-analysis-navigation", "document.activeElement===document.querySelector('.workspace-nav button[aria-controls=\"results\"]') && document.activeElement.matches(':focus-visible')");
     await arm(page, "document.querySelector('#prepare').hidden && !document.querySelector('#results').hidden");
     await key(page, "Enter"); await settled(page);
     await check(page, "keyboard-opens-analysis", "document.querySelector('#prepare').hidden && !document.querySelector('#results').hidden");

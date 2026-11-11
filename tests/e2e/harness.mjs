@@ -172,7 +172,7 @@ export async function startHarness({ fixture, transport, componentEntry, viewpor
           if (theme !== "system" && !baseURL) {
             await withTimeout(browser.evaluate(`new Promise((resolve,reject)=>{const theme=${JSON.stringify(theme)};const select=[...document.querySelectorAll(".rail-footer select")].find((item)=>[...item.options].some((option)=>option.value===theme));if(!select)return reject(new Error("Production theme selector was not rendered"));const root=document.documentElement;const applied=()=>root.dataset.theme===theme&&select.value===theme;const observer=new MutationObserver(()=>{if(applied()){observer.disconnect();resolve(true)}});observer.observe(root,{attributes:true,attributeFilter:["data-theme"]});select.value=theme;select.dispatchEvent(new Event("change",{bubbles:true}));if(applied()){observer.disconnect();resolve(true)}setTimeout(()=>{observer.disconnect();reject(new Error("Requested theme did not apply before capture"))},${timeoutMs})})`), "theme application");
           } else if (theme !== "system" && baseURL) {
-            await browser.evaluate(`document.documentElement.dataset.theme=${JSON.stringify(theme)};`);
+            await browser.evaluate(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
           }
         } else {
           const mountStatus = await withTimeout(browser.evaluate("window.__VLAEVAL_QA_MOUNT_PROMISE__"), "component mount assertions");

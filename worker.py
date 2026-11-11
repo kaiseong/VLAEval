@@ -9,22 +9,28 @@ from __future__ import annotations
 
 import base64
 import ctypes
+from contextlib import ExitStack
 from dataclasses import dataclass
+import ipaddress
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import signal
+import stat
 import subprocess
 import sys
-from typing import Final, Literal, assert_never
+from typing import Final, Literal, TypedDict, assert_never
+import urllib.error
+import urllib.request
 
 sys.dont_write_bytecode = True
 PREFIX: Final = "VLAEVAL "
 SCAN_DEPTH: Final = 8
 SCAN_NODES: Final = 10000
 SKIP: Final = {".git", ".venv", "node_modules", "__pycache__", "videos", "video", "images"}
-Operation = Literal["discover", "episodes", "configs", "evaluate"]
+Operation = Literal["discover", "episodes", "configs", "evaluate", "datasetui"]
 
 
 class WorkerError(Exception):
@@ -44,6 +50,9 @@ class Request:
     stride: int
     seed: int
     num_steps: int
+    datasetui_container: str = "datasetui-api-1"
+    datasetui_root: str = "/mnt/datasetui-nas/DatasetUI"
+    pytorch_python: str = ""
 
     @classmethod
     def decode(cls, encoded: str) -> Request:
@@ -51,8 +60,15 @@ class Request:
         if not isinstance(raw, dict):
             raise WorkerError("Request must be a JSON object.")
         operation = raw.get("operation")
-        if operation not in {"discover", "episodes", "configs", "evaluate"}:
-            raise WorkerError("operation must be discover, episodes, configs, or evaluate.")
+        if operation not in {"discover", "episodes", "configs", "evaluate", "datasetui"}:
+            raise WorkerError("operation must be discover, episodes, configs, evaluate, or datasetui.")
+        container = raw.get("datasetuiContainer", "datasetui-api-1")
+        if not isinstance(container, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", container):
+            raise WorkerError("datasetuiContainer must be a safe Docker name starting with an alphanumeric character.")
+        datasetui_root = raw.get("datasetuiRoot", "/mnt/datasetui-nas/DatasetUI")
+        if (not isinstance(datasetui_root, str) or not datasetui_root.startswith("/")
+                or "\0" in datasetui_root or ".." in PurePosixPath(datasetui_root).parts):
+            raise WorkerError("datasetuiRoot must be an absolute path without traversal.")
         roots = raw.get("roots", [])
         episodes = raw.get("episodes", [])
         if not isinstance(roots, list) or not all(isinstance(x, str) for x in roots):
@@ -79,6 +95,10 @@ class Request:
         config = raw.get("config", "")
         if not isinstance(config, str):
             raise WorkerError("config must be a string.")
+        pytorch_python = raw.get("pytorchPython", "")
+        if not isinstance(pytorch_python, str) or "\0" in pytorch_python or (
+                pytorch_python and not Path(os.path.expanduser(pytorch_python)).is_absolute()):
+            raise WorkerError("pytorchPython must be an absolute interpreter path (or start with ~).")
         if operation in {"configs", "evaluate"} and not paths["repo"]:
             raise WorkerError("An absolute OpenPi repo is required.")
         if operation in {"episodes", "evaluate"} and not paths["dataset"]:
@@ -87,7 +107,8 @@ class Request:
             raise WorkerError("Evaluation requires explicit nonempty episodes, config, and checkpoint.")
         return cls(operation, paths["repo"], tuple(roots), paths["dataset"], config,
                    paths["checkpoint"], tuple(dict.fromkeys(episodes)), values["maxSamples"],
-                   values["stride"], values["seed"], values["numSteps"])
+                   values["stride"], values["seed"], values["numSteps"], container, datasetui_root,
+                   os.path.expanduser(pytorch_python) if pytorch_python else "")
 
     def encoded(self) -> str:
         raw = {
@@ -95,8 +116,17 @@ class Request:
             "config": self.config, "checkpoint": self.checkpoint, "episodes": self.episodes,
             "maxSamples": self.max_samples, "stride": self.stride, "seed": self.seed,
             "numSteps": self.num_steps,
+            "datasetuiContainer": self.datasetui_container, "datasetuiRoot": self.datasetui_root,
+            "pytorchPython": self.pytorch_python,
         }
         return base64.b64encode(json.dumps(raw).encode()).decode()
+
+
+def pytorch_checkpoint(value: str) -> bool:
+    path = Path(value)
+    if path.name in {"model.safetensors", "params"}:
+        path = path.parent
+    return (path / "model.safetensors").is_file()
 
 
 def emit(event) -> None:
@@ -106,6 +136,145 @@ def emit(event) -> None:
 def read_json(path: Path):
     with path.open(encoding="utf-8") as stream:
         return json.load(stream)
+
+
+class DatasetUIEntry(TypedDict):
+    id: str
+    path: str
+    name: str
+    storageArea: Literal["raw", "derived"]
+    episodes: int | float | None
+    frames: int | float | None
+    fps: int | float | None
+    version: str | None
+
+
+class DatasetUIEvent(TypedDict):
+    type: Literal["datasetui"]
+    datasets: list[DatasetUIEntry]
+    warnings: list[str]
+
+
+def datasetui_read_info(source: Path, suffix: PurePosixPath) -> None:
+    """Check metadata through anchored descriptors, never following dataset symlinks."""
+    with ExitStack() as stack:
+        directory = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        stack.callback(os.close, directory)
+        for part in (*suffix.parts, "meta"):
+            directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            stack.callback(os.close, directory)
+        descriptor = os.open("info.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(descriptor, encoding="utf-8") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise WorkerError("meta/info.json must be a readable regular file.")
+            if not isinstance(json.load(stream), dict):
+                raise WorkerError("meta/info.json must contain a JSON object.")
+
+
+def datasetui(request: Request) -> DatasetUIEvent:
+    """List the running registry through GET only and map its bind-mounted datasets."""
+    event: DatasetUIEvent = {"type": "datasetui", "datasets": [], "warnings": []}
+    # The conditional checks running state without exposing state, config or environment.
+    template = "{{if .State.Running}}{{json .Mounts}}\n{{json .NetworkSettings.Networks}}{{end}}"
+    try:
+        inspection = subprocess.run(
+            ["docker", "inspect", "--format", template, request.datasetui_container],
+            capture_output=True, text=True, timeout=10,
+        )
+        if inspection.returncode != 0 or not inspection.stdout.strip():
+            raise WorkerError(f"DatasetUI container {request.datasetui_container!r} is unavailable or not running.")
+        mount_json, network_json = inspection.stdout.strip().splitlines()
+        mounts, networks = json.loads(mount_json), json.loads(network_json)
+        if not isinstance(mounts, list) or not isinstance(networks, dict):
+            raise WorkerError("Docker returned invalid mount or network metadata.")
+        mappings = []
+        for mount in mounts:
+            destination, source = mount.get("Destination"), mount.get("Source")
+            if isinstance(destination, str) and destination.startswith("/"):
+                # Keep non-bind overlays: they must not fall back to a parent bind.
+                mappings.append((PurePosixPath(destination),
+                                 Path(source) if mount.get("Type") == "bind"
+                                 and isinstance(source, str) and source.startswith("/") else None))
+        mappings.sort(key=lambda item: len(item[0].parts), reverse=True)
+        addresses = []
+        for network in networks.values():
+            address = network.get("IPAddress", "")
+            if address:
+                parsed = ipaddress.IPv4Address(address)
+                if not parsed.is_unspecified:
+                    addresses.append(str(parsed))
+        if not addresses:
+            raise WorkerError("Running DatasetUI container has no available IPv4 address.")
+        # Ignore host proxy settings for the local Docker network.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        rows = None
+        base_url = ""
+        for address in addresses:
+            base_url = (f"http://{address}:7861/api/v1/datasets"
+                        "?readiness=ready&include_missing=false&limit=500&offset=")
+            try:
+                with opener.open(base_url + "0", timeout=10) as response:
+                    rows = json.load(response)
+                break
+            except (urllib.error.URLError, TimeoutError, OSError):
+                continue
+        if rows is None:
+            raise WorkerError("DatasetUI API is unreachable on the container IPv4 networks (port 7861).")
+        offset = 0
+        while True:
+            if not isinstance(rows, list):
+                raise WorkerError("DatasetUI listing response must be a JSON array.")
+            for row in rows:
+                label = str(row.get("id", "<unknown>")) if isinstance(row, dict) else "<unknown>"
+                try:
+                    if not isinstance(row, dict):
+                        raise WorkerError("Invalid dataset record.")
+                    if row.get("readiness") != "ready" or row.get("available") is not True:
+                        raise WorkerError("Dataset is not ready or available.")
+                    area = row.get("storage_area")
+                    if area not in {"raw", "derived"}:
+                        raise WorkerError("Unsupported storage area.")
+                    relative = row.get("relative_path")
+                    if (not isinstance(relative, str) or "\0" in relative or "\\" in relative
+                            or PurePosixPath(relative).is_absolute() or ".." in PurePosixPath(relative).parts):
+                        raise WorkerError("Invalid absolute or traversing relative_path.")
+                    if not isinstance(row.get("id"), str) or not isinstance(row.get("name"), str):
+                        raise WorkerError("Dataset id and name must be strings.")
+                    version = row.get("codebase_version")
+                    if version is not None and version not in {"v2.0", "v2.1", "v3.0"}:
+                        raise WorkerError(f"Unsupported LeRobot version {version!r}.")
+                    container_path = PurePosixPath(request.datasetui_root) / area / relative
+                    mapping = next((item for item in mappings if container_path.is_relative_to(item[0])), None)
+                    if mapping is None or mapping[1] is None:
+                        raise WorkerError(f"No host bind mount maps {container_path}.")
+                    destination, source = mapping
+                    source = source.resolve(strict=True)
+                    suffix = container_path.relative_to(destination)
+                    host = source / suffix
+                    info_path = container_path / "meta/info.json"
+                    info_mapping = next((item for item in mappings if info_path.is_relative_to(item[0])), None)
+                    if info_mapping != mapping:
+                        raise WorkerError("Nested metadata mount cannot be represented by this host dataset path.")
+                    datasetui_read_info(source, suffix)
+                    numbers = {}
+                    for key in ("total_episodes", "total_frames", "fps"):
+                        value = row.get(key)
+                        numbers[key] = value if type(value) in {int, float} and math.isfinite(value) and value >= 0 else None
+                    event["datasets"].append({
+                        "id": row["id"], "path": str(host), "name": row["name"], "storageArea": area,
+                        "episodes": numbers["total_episodes"], "frames": numbers["total_frames"],
+                        "fps": numbers["fps"], "version": version,
+                    })
+                except (WorkerError, OSError, ValueError, UnicodeError) as exc:
+                    event["warnings"].append(f"DatasetUI dataset {label}: {exc}")
+            if len(rows) < 500:
+                break
+            offset += len(rows)
+            with opener.open(base_url + str(offset), timeout=10) as response:
+                rows = json.load(response)
+    except (WorkerError, OSError, ValueError, UnicodeError, subprocess.TimeoutExpired) as exc:
+        event["warnings"].append(f"DatasetUI listing: {exc}")
+    return event
 
 
 def episode_metadata(dataset: str):
@@ -235,6 +404,56 @@ def local_asset(url, **kwargs):
 
 def forbid_download(*args, **kwargs):
     raise RuntimeError("Dataset is incomplete locally. Provision all v2 metadata, parquet files and videos; downloads are disabled.")
+
+
+def pyav_decode_video_frames(video_path, timestamps, tolerance_s, backend=None):
+    """LeRobot's torchvision "pyav" decode (keyframe seek, closest frame) for torchvision >= 0.24 without VideoReader."""
+    import av
+    import numpy as np
+    import torch
+    first, last = min(timestamps), max(timestamps)
+    loaded, times = [], []
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        container.seek(int(first / stream.time_base), stream=stream, backward=True, any_frame=False)
+        for frame in container.decode(stream):
+            loaded.append(frame.to_rgb().to_ndarray())
+            times.append(float(frame.pts * stream.time_base))
+            if times[-1] >= last:
+                break
+    if not loaded:
+        raise RuntimeError(f"No video frames decoded from {video_path} at {first:.4f}s.")
+    distance = np.abs(np.asarray(timestamps, dtype=np.float64)[:, None] - np.asarray(times)[None, :])
+    closest = distance.argmin(axis=1)
+    if not (distance[np.arange(len(timestamps)), closest] < tolerance_s).all():
+        raise RuntimeError(f"Video frames at {timestamps} are outside tolerance {tolerance_s}s of decoded {times}.")
+    frames = np.stack([loaded[index] for index in closest]).transpose(0, 3, 1, 2)
+    return torch.from_numpy(np.ascontiguousarray(frames)).to(torch.float32) / 255
+
+
+def install_mask_dtype_fix(model):
+    """Opt-in (VLAEVAL_MASK_DTYPE_FIX=1, set by the Thor launcher): cast the additive attention mask to the attention
+    compute dtype. Newer torch.compile lowers pi05 attention to efficient SDPA, which rejects pi0_pytorch's float32
+    mask next to bf16 queries ("invalid dtype for bias"); same patch as the Thor deployment's trt_model_forward.py."""
+    import torch
+    cls = type(model)
+    if not hasattr(cls, "_prepare_attention_masks_4d") or getattr(cls, "_vlaeval_mask_dtype_fix", False):
+        return
+
+    def prepare(self, att_2d_masks):
+        mask = torch.where(att_2d_masks[:, None, :, :], 0.0, -2.3819763e38)
+        dtype = self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
+        return mask.to(dtype) if mask.dtype != dtype else mask
+
+    cls._prepare_attention_masks_4d = prepare
+    cls._vlaeval_mask_dtype_fix = True
+    print("VLAEval: attention mask dtype fix installed (VLAEVAL_MASK_DTYPE_FIX=1)", flush=True)
+
+
+def lerobot_decoder(module):
+    """The LeRobot decoder, or the PyAV equivalent where torchvision has no VideoReader (e.g. the Thor image)."""
+    import torchvision
+    return module.decode_video_frames if hasattr(torchvision.io, "VideoReader") else pyav_decode_video_frames
 
 
 def checkpoint_root(value):
@@ -388,7 +607,11 @@ class V3Dataset:
             raise RuntimeError(f"task_index {task_index} is absent from meta/tasks.parquet.")
         raw["task"] = self.meta.tasks[task_index]
         if self.video_keys:
-            from lerobot.common.datasets.video_utils import decode_video_frames
+            try:
+                import lerobot.common.datasets.video_utils as video_utils
+            except ModuleNotFoundError:  # LeRobot >= 0.3 (e.g. the Thor image) dropped the `common` package.
+                import lerobot.datasets.video_utils as video_utils
+            decode_video_frames = lerobot_decoder(video_utils)
             record = self.records[episode]
             local_time = float(raw.get("timestamp", frame / self.meta.fps))
             if abs(local_time - frame / self.meta.fps) > 1e-3:
@@ -442,17 +665,21 @@ class Metrics:
             "validSteps": rows,
             "actionNames": self.names,
             "mae": float(self.absolute.sum() / (rows * width)),
+            "mse": float(self.square.sum() / (rows * width)),
             "rmse": float(np.sqrt(self.square.sum() / (rows * width))),
             "firstStepMae": float(self.absolute[0].sum() / (self.counts[0] * width)),
+            "firstStepMse": float(self.square[0].sum() / (self.counts[0] * width)),
             "firstStepRmse": float(np.sqrt(self.square[0].sum() / (self.counts[0] * width))),
             "perDimension": [
                 {"name": name, "mae": float(self.absolute[:, i].sum() / rows),
+                 "mse": float(self.square[:, i].sum() / rows),
                  "rmse": float(np.sqrt(self.square[:, i].sum() / rows))}
                 for i, name in enumerate(self.names)
             ],
             "perHorizon": [
                 {"step": i, "count": int(count),
                  "mae": float(self.absolute[i].sum() / (count * width)) if count else None,
+                 "mse": float(self.square[i].sum() / (count * width)) if count else None,
                  "rmse": float(np.sqrt(self.square[i].sum() / (count * width))) if count else None}
                 for i, count in enumerate(self.counts)
             ],
@@ -470,8 +697,21 @@ def score_frames(dataset, policy, data, model, request, episodes):
         raise RuntimeError("Selected episodes contain no frames.")
     metrics = None
     episode_metrics = {}
+    episode_chunk_metrics = {}
     traces = {}
     samples, latency = [], []
+    joint_names = [f"{side}_arm_{i}" for side in ("left", "right") for i in range(7)]
+    state_feature = dataset.meta.features.get("observation.state", {})
+    state_names = state_feature.get("names") if isinstance(state_feature, dict) else None
+    joint_indices = None
+    joint_samples = []
+    if (isinstance(state_names, list) and all(isinstance(name, str) for name in state_names)
+            and len(set(state_names)) == len(state_names)
+            and all(name in state_names for name in joint_names)):
+        joint_indices = [state_names.index(name) for name in joint_names]
+    joint_unit = state_feature.get("unit") if isinstance(state_feature, dict) else None
+    if joint_unit not in ("rad", "deg"):
+        joint_unit = None
     warnings = [
         "Chunk metrics use all valid future rows; episode metrics and traces use first steps.",
         "Aggregate metrics combine native action dimensions; compare perDimension values when units differ.",
@@ -486,6 +726,17 @@ def score_frames(dataset, policy, data, model, request, episodes):
         raw = {key: np.asarray(value) if hasattr(value, "numpy") else value for key, value in raw.items()}
         if int(raw["episode_index"]) != episode or int(raw["frame_index"]) != frame:
             raise RuntimeError("Dataset frame ordering differs from episode metadata; refusing cross-episode scoring.")
+        if joint_indices is not None and "observation.state" in raw:
+            try:
+                state_row = np.asarray(raw["observation.state"])
+            except (TypeError, ValueError):
+                state_row = None
+            if (state_row is not None and state_row.ndim == 1
+                    and state_row.shape[0] == len(state_names)
+                    and state_row.dtype.kind in "iuf" and np.isfinite(state_row).all()):
+                positions = state_row[joint_indices].astype(np.float64)
+                if np.isfinite(positions).all():
+                    joint_samples.append({"episode": episode, "frame": frame, "positions": positions.tolist()})
         if data.prompt_from_task:
             raw = transforms.PromptFromLeRobotTask(dataset.meta.tasks)(raw)
         packed = repack(copy.deepcopy(raw))
@@ -542,8 +793,10 @@ def score_frames(dataset, policy, data, model, request, episodes):
         latency.append(elapsed)
         if episode not in episode_metrics:
             episode_metrics[episode] = Metrics(1, metrics.names)
+            episode_chunk_metrics[episode] = Metrics(model.action_horizon, metrics.names)
             traces[episode] = {"episode": episode, "frames": [], "predicted": [], "target": []}
         episode_metrics[episode].add(predicted[:1], target[:1], np.array([True]))
+        episode_chunk_metrics[episode].add(predicted, target, valid)
         trace = traces[episode]
         trace["frames"].append(frame)
         trace["predicted"].append(predicted[0].tolist())
@@ -558,8 +811,14 @@ def score_frames(dataset, policy, data, model, request, episodes):
         "latencyMs": {"median": float(np.median(latency)), "p95": float(np.percentile(latency, 95))},
         "traces": list(traces.values()),
         "perEpisode": [{"episode": ep, "framesEvaluated": int(m.counts[0]),
-                        "mae": m.result()["mae"], "rmse": m.result()["rmse"]}
+                        "mae": m.result()["mae"], "mse": m.result()["mse"], "rmse": m.result()["rmse"]}
                        for ep, m in episode_metrics.items()],
+        "perEpisodeChunks": [
+            {"episode": ep, "framesEvaluated": coverage[ep]["scoredAnchors"],
+             **{key: value for key, value in m.result().items()
+                if key in ("validSteps", "mae", "mse", "rmse")}}
+            for ep, m in episode_chunk_metrics.items()
+        ],
         "coverage": {
             "horizon": model.action_horizon,
             "episodes": list(coverage.values()),
@@ -571,6 +830,8 @@ def score_frames(dataset, policy, data, model, request, episodes):
             "validRowsByHorizon": horizon_counts,
         },
     })
+    if joint_samples:
+        result["jointObservations"] = {"names": joint_names, "unit": joint_unit, "samples": joint_samples}
     return result
 
 
@@ -579,9 +840,13 @@ def load_dataset(request, data, horizon):
         return V3Dataset(request, data, horizon)
     try:
         import lerobot.common.datasets.lerobot_dataset as lerobot
-    except ImportError as exc:
-        raise RuntimeError("Install this OpenPi repo's pinned LeRobot v2 dependency exposing lerobot.common.datasets; v3 is unsupported.") from exc
+    except ModuleNotFoundError:
+        try:  # LeRobot 0.3.x keeps the v2.1 reader under `lerobot.datasets`.
+            import lerobot.datasets.lerobot_dataset as lerobot
+        except ImportError as exc:
+            raise RuntimeError("Install a LeRobot v2 reader (lerobot.common.datasets or lerobot 0.3.x lerobot.datasets).") from exc
     lerobot.snapshot_download = forbid_download
+    lerobot.decode_video_frames = lerobot_decoder(lerobot)
     lerobot.get_safe_version = forbid_download
     root = Path(request["dataset"])
     metadata = request["metadata"]
@@ -632,6 +897,8 @@ def run(request):
     dataset = load_dataset(request, data, selected.model.action_horizon)
     checkpoint = checkpoint_root(request["checkpoint"])
     policy = create_trained_policy(selected, checkpoint, sample_kwargs={"num_steps": request["numSteps"]})
+    if os.environ.get("VLAEVAL_MASK_DTYPE_FIX") == "1" and getattr(policy, "_is_pytorch_model", False):
+        install_mask_dtype_fix(policy._model)
     result = score_frames(dataset, policy, data, selected.model, request, request["metadata"]["episodes"])
     result.update({key: request[key] for key in ("config", "dataset", "seed", "numSteps")})
     result.update({"checkpoint": str(checkpoint), "fps": float(dataset.meta.fps)})
@@ -689,6 +956,8 @@ def main() -> int:
         match request.operation:
             case "discover":
                 emit(discover(request.roots))
+            case "datasetui":
+                emit(datasetui(request))
             case "episodes" | "configs" | "evaluate":
                 if request.operation == "episodes":
                     info = read_json(Path(request.dataset) / "meta/info.json")
@@ -699,6 +968,12 @@ def main() -> int:
                 python = repo / ".venv/bin/python"
                 if not (repo / "src/openpi/training/config.py").is_file() or not python.is_file():
                     raise WorkerError("Select an OpenPi repo with src/openpi/training/config.py and a provisioned .venv/bin/python.")
+                if request.operation == "evaluate" and pytorch_checkpoint(request.checkpoint):
+                    # The repo lock's torch build may lack kernels for this GPU (e.g. cu126 on sm_120).
+                    if not request.pytorch_python or not Path(request.pytorch_python).is_file():
+                        raise WorkerError("PyTorch checkpoint requires a provisioned PyTorch interpreter "
+                                          f"(pytorchPython={request.pytorch_python or 'unset'}).")
+                    python = Path(request.pytorch_python)
                 payload = json.loads(base64.b64decode(request.encoded()))
                 if request.operation == "evaluate":
                     info = read_json(Path(request.dataset) / "meta/info.json")

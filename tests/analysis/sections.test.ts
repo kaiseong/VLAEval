@@ -133,6 +133,16 @@ test("detail renders the selected dimension when parent props change", () => {
   expect(markup).toContain(`<dd data-value="predicted">${generic.traces[0]?.predicted[0]?.[1]}</dd>`);
 });
 
+test("trajectory detail uses explicit coordinate choices without a misleading first-step inspector", () => {
+  const markup = renderToStaticMarkup(createElement(DetailPanel, {
+    ...detailProps, trajectory: { mode: "fk", channels: [{ sourceIndex: 3, title: "Left rx" }] },
+    selectedDimension: 3,
+  }));
+  expect(markup).toContain('<option value="3" selected="">');
+  expect(markup).not.toContain('class="point-inspector');
+  expect(markup).not.toContain('data-value="predicted"');
+});
+
 test("chunk forwards the exact retained identity and masks padded horizons", () => {
   // Given Q03's retained origin0 and valid horizon1.
   const contexts: ChunkPlotContext[] = [];
@@ -204,16 +214,16 @@ for (const metricTab of ["episode", "dimension", "horizon"] as const) {
     const display = (value: number | null) => value === null ? "—" : value.toLocaleString("ko-KR", { maximumFractionDigits: 6 });
     switch (metricTab) {
       case "episode":
-        expect(rows).toEqual(q03.perEpisode.map((item) => [`EP ${item.episode}`, String(item.framesEvaluated), display(item.mae), display(item.rmse)]));
+        expect(rows).toEqual(q03.perEpisode.map((item) => [`EP ${item.episode}`, String(item.framesEvaluated), display(item.mae), display(item.rmse ** 2), display(item.rmse)]));
         expect(markup).toContain('data-metric-scope="episode-first-step"');
         break;
       case "dimension":
-        expect(rows).toEqual(q03.perDimension.map((item) => [item.name, display(item.mae), display(item.rmse)]));
+        expect(rows).toEqual(q03.perDimension.map((item) => [item.name, display(item.mae), display(item.rmse ** 2), display(item.rmse)]));
         expect(markup).toContain('data-metric-scope="run-chunk"');
         break;
       case "horizon":
-        expect(rows).toEqual(q03.perHorizon.map((item) => [String(item.step), String(item.count), display(item.mae), display(item.rmse)]));
-        expect(rows[2]).toEqual(["2", "0", "—", "—"]);
+        expect(rows).toEqual(q03.perHorizon.map((item) => [String(item.step), String(item.count), display(item.mae), display(item.rmse === null ? null : item.rmse ** 2), display(item.rmse)]));
+        expect(rows[2]).toEqual(["2", "0", "—", "—", "—"]);
         break;
       default: {
         const exhaustive: never = metricTab;

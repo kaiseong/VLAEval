@@ -3,18 +3,20 @@ import { Activity, Check, Database, FolderSearch, Play, RefreshCw, Settings2, Sq
 import { z } from "zod";
 import {
   configsSchema, connectionSchema, discoverySchema, discoverRequestSchema,
-  episodesRequestSchema, episodesSchema, jobRequestSchema, jobSchema, type Job,
+  episodesRequestSchema, episodesSchema, jobRequestSchema, jobSchema, sessionSchema, type Job, type Session,
 } from "../contracts";
-import { api, createdJobSchema, errorMessage, isActive, mergeJob, statusLabels } from "./api";
+import { api, createdJobSchema, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
 import { Results } from "./Results";
+import { EvaluationResults } from "./results/EvaluationResults";
+import { HistoryManager } from "./HistoryManager";
 import { Field, Section } from "./ui/primitives";
 import { WorkspaceNav, type WorkspaceView } from "./WorkspaceNav";
+import { ArtifactPicker } from "./ArtifactPicker";
+import { remoteTargets, targetFor, type RemoteTarget } from "../targets";
 
-const defaults = {
-  host: "rtx6000@192.168.0.3", repo: "/home/rtx6000/kgs/pi05_rby1",
-  roots: "/home/rtx6000/kgs\n/home/rtx6000/.cache/huggingface/lerobot\n/home/rtx6000/.cache/openpi\n/data",
-  checkpoint: "", dataset: "", theme: "system",
-} as const;
+const [defaultTarget] = remoteTargets as [RemoteTarget, ...RemoteTarget[]];
+const targetSettings = (target: RemoteTarget) => ({ host: target.host, repo: target.repo, roots: target.roots.join("\n") });
+const defaults = { ...targetSettings(defaultTarget), checkpoint: "", dataset: "", theme: "system" } as const;
 const settingsSchema = z.object({
   host: z.string(), repo: z.string(), roots: z.string(), checkpoint: z.string(),
   dataset: z.string(), theme: z.enum(["system", "light", "dark"]),
@@ -51,6 +53,7 @@ export function App() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
+  const deletedIds = useRef(new Set<string>());
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
   const [displayId, setDisplayId] = useState("");
   const [view, setView] = useState<WorkspaceView>("preparation");
@@ -63,6 +66,8 @@ export function App() {
   const [seed, setSeed] = useState(0);
   const [numSteps, setNumSteps] = useState(10);
   const [episodeQuery, setEpisodeQuery] = useState("");
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState(savedUser);
   const mounted = useRef(true);
   const metadataController = useRef<AbortController | null>(null);
   const active = jobs.filter(isActive);
@@ -73,6 +78,13 @@ export function App() {
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.get("/api/session", { signal: controller.signal }).json().then((value) => setSession(sessionSchema.parse(value)))
+      .catch(() => { /* Older server: behave as local. */ });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -91,7 +103,7 @@ export function App() {
     try {
       const data = jobSchema.array().parse(await api.get("/api/jobs", signal ? { signal } : {}).json());
       if (signal?.aborted) return;
-      setJobs((current) => data.reduce(mergeJob, current));
+      setJobs((current) => data.reduce((items, job) => mergeJob(items, job, deletedIds.current), current));
       if (!workspaceChosen.current) {
         const initial = data.find((job) => job.status === "completed" && job.result) ?? data[0];
         setDisplayId(initial?.id ?? "");
@@ -125,7 +137,7 @@ export function App() {
         try {
           const job = jobSchema.parse(await api.get(`/api/jobs/${id}`, { signal: controller.signal }).json());
           if (disposed) return;
-          setJobs((current) => mergeJob(current, job));
+          setJobs((current) => mergeJob(current, job, deletedIds.current));
           if (!isActive(job)) source.close();
         } catch (cause) {
           if (disposed) return;
@@ -140,7 +152,7 @@ export function App() {
         try {
           const job = jobSchema.parse(JSON.parse(event.data));
           if (job.id !== id) { source.close(); setStreamError("실시간 응답의 실행 ID가 일치하지 않습니다. 다시 연결하세요."); return; }
-          setJobs((current) => mergeJob(current, job));
+          setJobs((current) => mergeJob(current, job, deletedIds.current));
           if (!isActive(job)) source.close();
         } catch (cause) {
           source.close();
@@ -193,6 +205,18 @@ export function App() {
     setError("");
   }
 
+  // A target switch replaces host, repo and roots together; the old checkpoint/dataset paths belong to the old host.
+  function selectTarget(id: string) {
+    const target = remoteTargets.find((item) => item.id === id);
+    if (!target) return;
+    setDiscovery(null); setConfigs(null); setConfig(""); setEpisodes(null); setSelected([]);
+    setSettings((current) => settingsSchema.parse({
+      ...current, ...targetSettings(target), checkpoint: "",
+      dataset: current.dataset.startsWith("/mnt/datasetui-nas/") ? current.dataset : "",
+    }));
+    setError("");
+  }
+
   async function discover() {
     setBusy("discover"); setError(""); setDiscovery(null);
     try {
@@ -223,7 +247,7 @@ export function App() {
       setView("analysis");
       workspaceChosen.current = true;
       const job = jobSchema.parse(await api.get(`/api/jobs/${created.id}`).json());
-      setJobs((current) => mergeJob(current, job));
+      setJobs((current) => mergeJob(current, job, deletedIds.current));
     } catch (cause) {
       setError(await errorMessage(cause));
       // A successful POST followed by a failed snapshot must not permit another run.
@@ -235,7 +259,7 @@ export function App() {
     setCancelling(id); setError("");
     try {
       const job = jobSchema.parse(await api.post(`/api/jobs/${id}/cancel`).json());
-      setJobs((current) => mergeJob(current, job));
+      setJobs((current) => mergeJob(current, job, deletedIds.current));
     } catch (cause) { setError(await errorMessage(cause)); }
     finally { setCancelling(""); }
   }
@@ -249,14 +273,23 @@ export function App() {
     <a className="skip-link" href="#main">본문으로 이동</a>
     <main id="main" className="main">
     <header className="workspace-header">
-      <div className="brand"><Activity aria-hidden="true" /><strong>VLA<span>Eval</span></strong><span className="badge">LOCAL</span></div>
+      <div className="brand"><Activity aria-hidden="true" /><strong>VLA<span>Eval</span></strong><span className="badge">{session && !session.local ? "사내망" : "LOCAL"}</span></div>
       <h1>에피소드 평가</h1>
+      {session && !session.local && <Field label="내 이름">
+        <input data-user-name value={user} maxLength={40} autoComplete="name" placeholder="평가 전에 입력" aria-invalid={!user.trim()}
+          onChange={(event) => { setUser(event.target.value); saveUser(event.target.value); }} />
+      </Field>}
       <WorkspaceNav view={view} onChange={(next) => { workspaceChosen.current = true; setView(next); }} />
-      <Field label="실행 기록"><select id="history" value={displayId} onChange={(event) => { setDisplayId(event.target.value); setView("analysis"); workspaceChosen.current = true; }}>
+      <Field label="실행 기록"><select id="history" value={displayId} onChange={(event) => { setDisplayId(event.target.value); if (view !== "evaluation") setView("analysis"); workspaceChosen.current = true; }}>
         <option value="">실행을 선택하세요</option>
-        {jobs.map((job) => <option key={job.id} value={job.id}>{job.request.config} · {statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")}</option>)}
+        {jobs.map((job) => <option key={job.id} value={job.id}>{job.request.config} · {statusLabels[job.status]} · {new Date(job.createdAt).toLocaleString("ko-KR")}{job.owner ? ` · ${job.owner.name}` : ""}</option>)}
       </select></Field>
       <button disabled={historyState === "loading"} onClick={() => void loadHistory()} aria-label="기록 새로고침"><RefreshCw size={16} aria-hidden="true" />{historyState === "loading" ? "불러오는 중…" : "새로고침"}</button>
+      <HistoryManager jobs={jobs} session={session} onDeleted={(id) => {
+        deletedIds.current.add(id);
+        setJobs((current) => current.filter((job) => job.id !== id));
+        setDisplayId((current) => current === id ? "" : current);
+      }} />
       <div className="rail-footer">
         <Field label="화면 테마"><select value={settings.theme} onChange={(event) => updateSettings("theme", event.target.value)}><option value="system">시스템 설정</option><option value="light">라이트</option><option value="dark">다크</option></select></Field>
       </div>
@@ -269,15 +302,16 @@ export function App() {
       {view === "preparation" && discovery && <div className="notice"><strong>탐색 완료</strong><p>저장소 {discovery.repositories.length} · 체크포인트 {discovery.checkpoints.length} · 데이터셋 {discovery.datasets.length}</p>{discovery.warnings.length > 0 && <details><summary>탐색 주의사항 {discovery.warnings.length}개</summary><div className="warning-list" tabIndex={0} role="region" aria-label="탐색 주의사항">{discovery.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div></details>}</div>}
       {streamError && <div className="notice" role="status"><p>{streamError}</p><button onClick={() => { setStreamError(""); setStreamVersion((value) => value + 1); }}><RefreshCw size={16} aria-hidden="true" />다시 연결</button></div>}
       {active.map((job) => <section className="run-progress panel" key={job.id} aria-label="진행 중인 평가">
-        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
+        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id || !ownsJob(session, job)} {...(ownsJob(session, job) ? {} : { title: `${ownerLabel(job)}님이 실행 중인 평가입니다.` })} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
         <progress aria-label="평가 진행률" value={job.progress.completed} max={Math.max(1, job.progress.total)} />
         <p className="mono" role="status">{job.progress.completed.toLocaleString()} / {job.progress.total.toLocaleString()} 프레임</p>
       </section>)}
       <form id="prepare" hidden={view !== "preparation"} onSubmit={(event) => { event.preventDefault(); if (prepared && !locked) void startJob(); }}>
         <details className="panel connection-disclosure" id="connection">
-          <summary><Settings2 size={16} aria-hidden="true" /> 연결 설정 <span className="muted path">{settings.host}</span></summary>
+          <summary><Settings2 size={16} aria-hidden="true" /> 연결 설정 <span className="muted path">{targetFor(settings.host)?.label ?? settings.host}</span></summary>
           <fieldset className="connection" disabled={locked}>
             <legend><Terminal size={16} aria-hidden="true" /> SSH 연결</legend>
+            <Field label="평가 서버"><select value={targetFor(settings.host)?.id ?? ""} onChange={(event) => selectTarget(event.target.value)}>{!targetFor(settings.host) && <option value="">직접 입력</option>}{remoteTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</select></Field>
             <Field label="대상 호스트"><input value={settings.host} onChange={(event) => updateSettings("host", event.target.value)} spellCheck={false} /></Field>
             <Field label="탐색 루트 · 한 줄에 하나" hint="최대 16개. 기존 파일만 탐색합니다."><textarea rows={3} value={settings.roots} onChange={(event) => updateSettings("roots", event.target.value)} spellCheck={false} /></Field>
             <button type="button" onClick={() => void discover()}><FolderSearch size={17} aria-hidden="true" />{busy === "discover" ? "탐색 중…" : "아티팩트 탐색"}</button>
@@ -293,10 +327,14 @@ export function App() {
               <Field label="기존 config"><select value={config} disabled={!configs?.configs.length} onChange={(event) => setConfig(event.target.value)}><option value="">config를 선택하세요</option>{configs?.configs.map((item) => <option value={item.name} key={item.name}>{item.name} · {item.actionDim}차원 / {item.actionHorizon}스텝</option>)}</select></Field>
               {configs && !configs.configs.length && <p className="muted">사용 가능한 config가 없습니다. 저장소 경로와 원격 환경을 확인하세요.</p>}
               {configs && <p className="muted path">저장소 revision: {configs.revision}</p>}
-              <Field label="체크포인트 경로" hint="탐색 결과에서 선택하거나 절대 경로를 직접 입력하세요."><input className="mono" list="checkpoints" value={settings.checkpoint} onChange={(event) => updateSettings("checkpoint", event.target.value)} placeholder="/…/checkpoints/…" spellCheck={false} /></Field>
+              {view === "preparation" && <ArtifactPicker kind="openpi" host={settings.host} value={settings.checkpoint}
+                disabled={locked} onSelect={(path) => updateSettings("checkpoint", path)} />}
+              <Field label="체크포인트 경로" hint="목록에서 선택하면 자동 입력됩니다. 절대 경로를 직접 입력할 수도 있습니다."><input className="mono" list="checkpoints" value={settings.checkpoint} onChange={(event) => updateSettings("checkpoint", event.target.value)} placeholder="/…/checkpoints/…" spellCheck={false} /></Field>
               <datalist id="checkpoints">{discovery?.checkpoints.map((item) => <option key={item.path} value={item.path}>{item.format} · step {item.step ?? "미상"}</option>)}</datalist>
             </Section>
             <Section number="02" title="데이터셋" subtitle="LeRobot 데이터셋을 지정하고 에피소드 메타데이터를 읽습니다.">
+              {view === "preparation" && <ArtifactPicker kind="datasetui" host={settings.host} value={settings.dataset}
+                disabled={locked} onSelect={(path) => updateSettings("dataset", path)} />}
               <Field label="데이터셋 경로" hint="탐색 루트 밖의 데이터셋도 절대 경로로 지정할 수 있습니다."><input className="mono" list="datasets" value={settings.dataset} onChange={(event) => updateSettings("dataset", event.target.value)} placeholder="/…/datasets/…" spellCheck={false} /></Field>
               <datalist id="datasets">{discovery?.datasets.map((item) => <option key={item.path} value={item.path}>{item.name} · {item.episodes} 에피소드</option>)}</datalist>
               <div className="dataset-summary"><Database aria-hidden="true" /><div><strong>{metadataState === "ready" ? `${episodes?.episodes.length.toLocaleString()}개 에피소드` : "에피소드 메타데이터"}</strong><p>{metadataState === "loading" ? "원격 데이터셋을 읽고 있습니다…" : episodes ? `${episodes.fps} FPS · ${episodes.version} · ${episodes.episodes.reduce((sum, item) => sum + item.length, 0).toLocaleString()} 프레임` : "저장소와 데이터셋을 지정한 뒤 메타데이터를 읽으세요."}</p></div></div>
@@ -330,7 +368,9 @@ export function App() {
         {displayed?.result ? <Results key={displayed.id} job={displayed} /> : <Section title="평가 결과" subtitle="저장된 실행을 선택하거나 새 평가를 시작하세요.">
           <div className="empty"><Activity size={32} aria-hidden="true" /><h3>{displayed ? statusLabels[displayed.status] : "아직 표시할 결과가 없습니다"}</h3><p>{displayed?.error || (displayed?.status === "cancelled" ? "평가가 취소되었습니다. 설정을 확인한 후 새 평가를 시작하세요." : displayed && isActive(displayed) ? "평가가 끝나면 액션 그래프와 수치 지표가 표시됩니다." : "선택한 에피소드의 예측과 정답을 여기서 비교합니다.")}</p></div>
         </Section>}
-        {displayed && <details className="panel logs"><summary>선택 실행 로그 · {statusLabels[displayed.status]}</summary><pre>{displayed.logs.join("\n") || "저장된 로그가 없습니다."}</pre></details>}
+      </div>
+      <div id="evaluation-results" hidden={view !== "evaluation"}>
+        {view === "evaluation" && <EvaluationResults jobs={jobs} selectedId={displayId} onSelect={setDisplayId} />}
       </div>
       <footer className="page-footer">VLAEval · 기존 아티팩트의 오프라인 평가 · 업로드 / 학습 / 로봇 제어 없음</footer>
     </main>

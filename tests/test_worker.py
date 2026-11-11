@@ -211,10 +211,15 @@ def test_metrics_when_chunks_padded_weight_valid_rows():
     assert result["validSteps"] == 3
     assert result["mae"] == 3.5
     assert result["rmse"] == pytest.approx(np.sqrt(91 / 6))
+    assert result["mse"] == pytest.approx(91 / 6)
     assert result["firstStepMae"] == 3.5
+    assert result["firstStepMse"] == pytest.approx(66 / 4)
     assert result["perDimension"][0]["mae"] == 3
+    assert [d["mse"] for d in result["perDimension"]] == pytest.approx([35 / 3, 56 / 3])
     assert [h["count"] for h in result["perHorizon"]] == [2, 1, 0]
+    assert [h["mse"] for h in result["perHorizon"][:2]] == pytest.approx([66 / 4, 25 / 2])
     assert result["perHorizon"][2]["mae"] is None
+    assert result["perHorizon"][2]["mse"] is None
 
 
 @pytest.mark.parametrize("prediction,valid", [
@@ -306,6 +311,46 @@ def test_scoring_when_selected_ids_noncontiguous_covers_full_traces(scoring_obje
     np.testing.assert_array_equal(policy.noises[0], policy.noises[1])
     events = [json.loads(line.removeprefix("VLAEVAL ")) for line in capsys.readouterr().out.splitlines()]
     assert events[-1]["completed"] == events[-1]["total"] == 5
+
+
+def test_scoring_when_episode_lengths_and_masks_differ_weights_squared_errors(scoring_objects):
+    # Given: two- and three-frame episodes with different errors and an interior masked row.
+    dataset, _, data, model, request, episodes = scoring_objects
+
+    class MaskedDataset:
+        meta = dataset.meta
+
+        def __getitem__(self, index):
+            raw = dataset[index]
+            if raw["episode_index"] == 2 and raw["frame_index"] == 0:
+                raw["action_is_pad"][1] = True
+            return raw
+
+    class Policy:
+        def infer(self, observation, *, noise):
+            error = 3 if observation["state"][0] >= 200 else 1
+            return {"actions": np.stack([observation["state"] + [error, 0.5] for _ in range(3)])}
+
+    # When
+    result = runtime["score_frames"](MaskedDataset(), Policy(), data, model, request, episodes)
+    # Then: aggregate uses eight valid rows, episodes use only their first-step rows.
+    assert result["validSteps"] == 8
+    assert result["mse"] == pytest.approx(36 / 16)
+    assert result["firstStepMse"] == pytest.approx(30.25 / 10)
+    assert [(e["episode"], e["framesEvaluated"], e["mse"]) for e in result["perEpisode"]] == [
+        (0, 2, 0.625), (2, 3, 4.625),
+    ]
+    chunks = result["perEpisodeChunks"]
+    assert [(e["episode"], e["framesEvaluated"], e["validSteps"]) for e in chunks] == [
+        (0, 2, 3), (2, 3, 5),
+    ]
+    # Full chunks use every unpadded row, not a mean of horizon/episode means.
+    assert [e["mae"] for e in chunks] == pytest.approx([7 / 12, 29 / 20])
+    assert [e["mse"] for e in chunks] == pytest.approx([2.75 / 6, 33.25 / 10])
+    assert [e["rmse"] for e in chunks] == pytest.approx([np.sqrt(2.75 / 6), np.sqrt(33.25 / 10)])
+    assert [d["mse"] for d in result["perDimension"]] == pytest.approx([34 / 8, 0.25])
+    assert [h["count"] for h in result["perHorizon"]] == [5, 2, 1]
+    assert [h["mse"] for h in result["perHorizon"]] == pytest.approx([3.025, 1.125, 0.625])
 
 
 def test_scoring_when_seed_repeated_preserves_noise(scoring_objects, capsys):

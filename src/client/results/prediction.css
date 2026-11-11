@@ -1,0 +1,17 @@
+.prediction-workspace { min-width: 0; display: grid; gap: var(--s3); }
+.prediction-toolbar, .prediction-detail-controls { display: flex; align-items: end; flex-wrap: wrap; gap: var(--s3); }
+.prediction-toolbar > .field { flex: 1; min-width: 200px; }
+.prediction-toolbar select, .prediction-settings select { width: 100%; min-width: 0; }
+.prediction-configuration { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s2) var(--s3); }
+.prediction-settings { display: grid; gap: var(--s3); padding-block: var(--s2); }
+.prediction-settings__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.prediction-mapping__arms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+.prediction-settings fieldset { min-width: 0; padding: var(--s3); border: 1px solid var(--line); border-radius: var(--radius-small); }
+.prediction-provenance { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--s2); color: var(--muted); font-size: var(--caption); }
+.prediction-detail-controls > .field { flex: 1; }
+.prediction-zoom { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s3); }
+.prediction-zoom p { margin: 0; color: var(--muted); font-size: var(--caption); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .prediction-toolbar > .field { flex-basis: 100%; }
+  .prediction-settings__fields, .prediction-mapping__arms { grid-template-columns: minmax(0, 1fr); }
+}

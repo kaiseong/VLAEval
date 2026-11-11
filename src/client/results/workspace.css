@@ -5,10 +5,6 @@
 .result-toolbar p { font-size: var(--caption); color: var(--muted); }
 .result-toolbar .field { min-width: 0; }
 .result-toolbar .cluster { gap: var(--s2); }
-.result-scores { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: 0; padding: var(--s2) var(--s3); background: var(--secondary); border-radius: var(--radius); font-variant-numeric: tabular-nums; }
-.result-scores > div { display: flex; gap: var(--s2); align-items: baseline; }
-.result-scores dt { font-size: var(--caption); color: var(--muted); }
-.result-scores dd { margin: 0; font-weight: 650; }
 .coverage-summary { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); min-width: 0; font-size: var(--caption); line-height: 1.4; }
 .coverage-summary__scope, .coverage-summary__subset { min-width: 0; overflow-wrap: anywhere; }
 .coverage-summary__subset { color: var(--muted); }
@@ -34,10 +30,8 @@
   .result-workspace .overview__heading > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); }
   .result-workspace .overview__heading { gap: var(--s1); margin-bottom: var(--s2); }
   .result-workspace .overview-panel { padding: var(--s1); }
-  /* Compact the SVG viewport, not its aspect-ratio allocation. ResizeObserver
-     measures the unzoomed width so ticks retain the full physical panel width. */
-  .result-workspace .overview-panel .trace-plot svg { height: calc(var(--s8) * 5); zoom: calc(3 / 5); }
-  .result-workspace .overview-panel .trace-plot svg text { font-size: calc(var(--caption) * 5 / 3); }
+  /* Results use the full viewport width; other pages keep the readable column. */
+  .main > *:has(.result-workspace) { max-width: none; }
 }
 @media (max-width: 760px) {
   .result-toolbar > div:first-child { flex-basis: 100%; }
@@ -46,8 +40,6 @@
   .result-toolbar > .field select { flex: 1; }
   .result-toolbar > .cluster { width: 100%; }
   .result-toolbar > .cluster button { flex: 1; }
-  .result-scores { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
-  .result-scores > div { flex-wrap: wrap; gap: var(--s1); }
   .workspace-cursor .field { flex: 1; width: auto; }
   .workspace-cursor output { flex-basis: 100%; padding: 0; }
   .result-content > .field { max-width: 100%; }

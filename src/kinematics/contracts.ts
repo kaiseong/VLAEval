@@ -22,8 +22,10 @@ const chainJointShape = {
   childLink: nonEmpty,
   origin: transformOriginSchema,
 };
+const jointLimitSchema = z.object({ lower: finite, upper: finite }).strict()
+  .refine(({ lower, upper }) => lower <= upper, "Joint lower limit must not exceed upper limit");
 const compiledJointSchema = z.discriminatedUnion("type", [
-  z.object({ ...chainJointShape, type: z.literal("revolute"), axis: unitAxisSchema }).strict(),
+  z.object({ ...chainJointShape, type: z.literal("revolute"), axis: unitAxisSchema, limit: jointLimitSchema.optional() }).strict(),
   z.object({ ...chainJointShape, type: z.literal("fixed") }).strict(),
 ]);
 const armJointNames = {

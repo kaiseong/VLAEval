@@ -1,0 +1,16 @@
+.evaluation-results { min-width: 0; }
+.evaluation-results .panel { display: grid; gap: var(--s4); }
+.evaluation-results .section-heading { margin-bottom: 0; }
+.evaluation-results .panel > .field { margin-bottom: 0; }
+.evaluation-results .table-scroll { max-width: 100%; }
+.evaluation-results table { min-width: max-content; }
+.evaluation-results th, .evaluation-results td { padding: var(--s2) var(--s3); vertical-align: top; }
+.evaluation-results caption { font-weight: 650; color: var(--ink); }
+.evaluation-model { display: grid; gap: var(--s1); text-align: start; max-width: calc(var(--s8) * 10); white-space: normal; overflow-wrap: anywhere; font-family: system-ui, sans-serif; font-weight: 400; }
+.evaluation-model span, .evaluation-model small { color: var(--muted); font-size: var(--caption); }
+.evaluation-compare fieldset { display: grid; gap: var(--s2); max-height: calc(var(--s8) * 8); overflow-y: auto; }
+.evaluation-compare label { display: flex; align-items: center; gap: var(--s2); min-height: 44px; overflow-wrap: anywhere; }
+.evaluation-comparison-status { padding: var(--s3); background: var(--secondary); border-radius: var(--radius); overflow-wrap: anywhere; }
+.evaluation-provenance { overflow-wrap: anywhere; font-size: var(--caption); }
+.evaluation-provenance > div + div { margin-top: var(--s3); }
+.evaluation-unavailable { display: block; max-width: calc(var(--s8) * 10); white-space: normal; text-align: start; }

@@ -1,5 +1,6 @@
 import { workerEventSchema } from "./contracts";
 import type { WorkerEvent } from "./contracts";
+import { targetFor } from "./targets";
 
 export class RemoteError extends Error {
   constructor(message: string, readonly exitCode: number | null = null) {
@@ -21,9 +22,11 @@ export function sshCommand(host: string, command: string): string[] {
 
 export type RemoteRequest = {
   readonly host: string;
-  readonly operation: "discover" | "configs" | "episodes" | "evaluate";
+  readonly operation: "discover" | "datasetui" | "configs" | "episodes" | "evaluate";
   readonly repo?: string;
   readonly roots?: readonly string[];
+  readonly datasetuiContainer?: string;
+  readonly datasetuiRoot?: string;
   readonly config?: string;
   readonly checkpoint?: string;
   readonly dataset?: string;
@@ -34,9 +37,24 @@ export type RemoteRequest = {
   readonly numSteps?: number;
 };
 
+/** Remote interpreter for PyTorch checkpoints on `host` (env override, then target); `~` expands remotely. */
+export function pytorchPython(host?: string): string {
+  return process.env["VLAEVAL_PYTORCH_PYTHON"]
+    ?? (host === undefined ? undefined : targetFor(host)?.pytorchPython) ?? "~/kgs/venvs/pi05_cu128/bin/python";
+}
+
+/** Shell fragment assigning $py: the PyTorch interpreter when the checkpoint holds model.safetensors. */
+export function openpiPythonSelector(repo: string, checkpoint: string): string {
+  const torch = pytorchPython();
+  const torchShell = torch.startsWith("~/") ? `"$HOME"/${quoteShell(torch.slice(2))}` : quoteShell(torch);
+  return `c=${quoteShell(checkpoint)}; case "$c" in */model.safetensors|*/params) c="\${c%/*}";; esac; `
+    + `if [ -f "$c/model.safetensors" ]; then py=${torchShell}; else py=${quoteShell(`${repo}/.venv/bin/python`)}; fi; `;
+}
+
 export function workerCommand(request: RemoteRequest): string {
-  const python = request.operation === "discover" ? "python3" : `${request.repo}/.venv/bin/python`;
-  const payload = Buffer.from(JSON.stringify(request)).toString("base64");
+  const python = request.operation === "discover" || request.operation === "datasetui" ? "python3" : `${request.repo}/.venv/bin/python`;
+  const payload = Buffer.from(JSON.stringify(request.operation === "evaluate"
+    ? { ...request, pytorchPython: pytorchPython(request.host) } : request)).toString("base64");
   return `exec env PYTHONDONTWRITEBYTECODE=1 XLA_PYTHON_CLIENT_PREALLOCATE=false ${quoteShell(python)} -u - ${quoteShell(payload)}`;
 }
 
@@ -51,8 +69,10 @@ export async function consumeLines(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // Search only the new chunk: rescanning a multi-megabyte pending line per chunk is quadratic.
+      const searched = pending.length;
       pending += decoder.decode(value, { stream: true });
-      let newline = pending.indexOf("\n");
+      let newline = pending.indexOf("\n", searched);
       while (newline >= 0) {
         onLine(pending.slice(0, newline).replace(/\r$/, ""));
         pending = pending.slice(newline + 1);

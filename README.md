@@ -17,7 +17,46 @@ bun run start
 
 브라우저에서 <http://127.0.0.1:4310>을 엽니다. 개발 시에는 `bun run dev`를
 사용합니다. 다른 포트는 `PORT=4311 bun run start`로 지정할 수 있습니다.
-서버는 로컬 루프백 주소에만 바인딩합니다.
+기본값에서는 서버가 로컬 루프백 주소에만 바인딩합니다.
+
+사내망 공유(LAN 모드):
+
+```bash
+VLAEVAL_BIND=127.0.0.1,192.168.0.45 VLAEVAL_PUBLIC_HOSTS=192.168.0.45 \
+VLAEVAL_RUNS_DIR=/mnt/nas-public/vlaeval_runs bun run start
+```
+
+- `VLAEVAL_BIND`: 쉼표로 구분한 바인딩 주소. 주소마다 따로 열어서 VPN·docker 인터페이스는 닫힌 채로 둡니다.
+- `VLAEVAL_PUBLIC_HOSTS`: 루프백 외에 허용할 Host 헤더 값. 비어 있으면 LAN 접속은 모두 403입니다.
+- 루프백 접속(이 PC)은 제한이 없습니다. LAN 접속은 화면 위쪽 이름 입력이 있어야 쓰기 요청이 되고,
+  SSH 대상·저장소·탐색/체크포인트/데이터셋 경로가 `src/targets.ts`에 등록된 평가 서버별 허용 목록 안이어야
+  합니다 (저장소는 서버마다 하나, 경로는 그 서버의 탐색 루트 아래).
+  실행 기록에는 이름과 접속 IP가 남고, LAN 사용자는 자기 IP로 시작한 기록만 취소·삭제할 수 있습니다.
+- 이름은 확인하지 않는 자기 신고 값이고 HTTP는 암호화되지 않습니다. 사내망 밖으로 포트를 열지 마세요.
+- 공용 NAS를 `VLAEVAL_RUNS_DIR`로 쓰면 NAS에 쓸 수 있는 누구나 기록 파일을 바꿀 수 있습니다. 스냅숏은
+  새 임시 파일(O_EXCL)로만 쓰고, 저장된 기록을 다시 실행할 때도 경로 허용 목록을 다시 검사합니다.
+
+평가 서버(연결 설정 › 평가 서버)는 `src/targets.ts`에 등록합니다.
+
+| 평가 서버 | SSH | 저장소 | PyTorch 실행 |
+|---|---|---|---|
+| RTX6000 · 공용 서버 | `rtx6000@192.168.0.3` | `/home/rtx6000/kgs/pi05_rby1` | `~/kgs/venvs/pi05_cu128/bin/python` |
+| Thor · docker PyTorch | `nvidia@192.168.0.223` | `/home/nvidia/kgs/pi05_rby1` | 저장소의 `.venv/bin/python` = `deploy/thor/python` |
+
+- DatasetUI 목록은 어느 서버를 골라도 rtx6000의 DatasetUI 컨테이너에서 읽습니다. NAS
+  (`//192.168.0.4/public`)는 모든 평가 서버에 `/mnt/datasetui-nas`로 마운트해야 경로가 그대로 맞습니다.
+- Thor는 `openpi-pi0.5:vlaeval` 이미지(`deploy/thor/Dockerfile` = Thor 이미지 + 저장소의
+  `transformers_replace`) 안에서 SSH 사용자 권한으로 실행합니다. `deploy/thor/python`이 홈과
+  `/mnt/datasetui-nas`(읽기 전용)를 같은 경로로 마운트하고 `--pid=host`로 띄우므로 PID·취소·경로가
+  호스트와 같습니다. 이미지의 LeRobot 0.3/torchvision 0.27 차이는 worker가 처리합니다
+  (`lerobot.datasets` import, torchvision `VideoReader`가 없으면 같은 규칙의 PyAV 디코더 사용).
+- Thor의 torch.compile은 bf16 query와 float32 attention mask를 거부하므로 launcher가
+  `VLAEVAL_MASK_DTYPE_FIX=1`로 mask를 계산 dtype으로 바꿉니다(Thor 배포의 `install_attention_mask_dtype_fix`와 같음).
+  끄려면 Thor에서 `VLAEVAL_MASK_DTYPE_FIX=0`.
+- Thor 저장소는 rtx6000 `~/kgs/pi05_rby1`(574a4b7 + 미커밋 config.py)의 사본이고, `data_loader.py`의
+  LeRobot import만 두 경로를 모두 받도록 바꿨습니다. `transformers_replace`가 바뀌면 이미지를 다시 빌드합니다:
+  `docker build -t openpi-pi0.5:vlaeval -f ~/kgs/vlaeval.Dockerfile ~/kgs/pi05_rby1/src/openpi/models_pytorch/transformers_replace`
+- Thor의 JAX 체크포인트 평가와 attention 진단은 확인하지 않았습니다. 진단은 지금도 rtx6000 전용입니다.
 
 선택적 환경 변수:
 

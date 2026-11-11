@@ -9,6 +9,7 @@ import { compileUrdfProfile, UrdfCompileError } from "./urdf";
 const defaultRoots = [
   "/home/kgs/workspace/sdk-tools/rby1-pose-studio/assets/models/rby1a/urdf",
   "/home/kgs/workspace/sdk-tools/rby1-pose-studio/assets/models/rby1m/urdf",
+  "/home/kgs/workspace/VLA/robot-masks/urdf",
 ] as const;
 const maxXmlBytes = 2 * 1024 * 1024;
 const rootsSchema = z.array(z.string().refine(isAbsolute, "URDF roots must be absolute directories"));

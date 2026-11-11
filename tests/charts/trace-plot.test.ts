@@ -104,6 +104,24 @@ test("raw selection is controlled, including missing frame rather than nearest r
   expect(reset).toContain('data-source-frame="unavailable"');
 });
 
+test("shared hover guide uses time coordinates independently of scored selection", () => {
+  const rendered = markup({ hoverFrame: 4 });
+  const geometry = ready(layout());
+  expect(rendered).toContain(`data-hover-frame="4" x1="${geometry.x(4)}" x2="${geometry.x(4)}"`);
+  expect(rendered).toContain('aria-valuenow="3"');
+  expect(markup({ hoverFrame: 10 })).not.toContain('data-hover-frame=');
+});
+
+test("chunk-only zoom keeps raw overlay domains and hover guides without scored samples", () => {
+  const overlays = [{ key: "chunk-0", color: "blue", points: [{ frame: 15, value: 4 }, { frame: 16, value: 6 }] }];
+  const window = { startFrame: 15, endFrame: 16 };
+  const geometry = ready(layout(series, { window, overlays }));
+  expect(geometry.visible.frames).toEqual([]);
+  expect([geometry.min, geometry.max]).toEqual([4, 6]);
+  expect(markup({ window, overlays, hoverFrame: 15 })).toContain('data-hover-frame="15"');
+  expect(layout(series, { window: { startFrame: 17, endFrame: 18 }, overlays }).kind).toBe("empty");
+});
+
 test("shared sampler bounds both paths and marks unrenderable gap density", () => {
   const length = 100_000;
   const large = { frames: Array.from({ length }, (_, i) => i), predicted: Array.from({ length }, (_, i) => i % 2 ? null : 1), target: Array.from({ length }, () => 2), fps: 30 };
@@ -154,7 +172,8 @@ test("late narrow windows retain distinct readable absolute time ticks", () => {
   for (const compact of [false, true]) {
     // When: the actual TracePlot renders the controlled source-frame window.
     const rendered = markup({ series: input, window: lateWindow, sourceFrame: 99990, compact });
-    const ticks = [...rendered.matchAll(/<text x="([^"]+)" y="(?:124|304)" text-anchor="([^"]+)">([^<]+)<\/text>/g)];
+    const timeAxis = rendered.match(/<g class="trace-plot__time-axis">([\s\S]*?)<\/g>/)?.[1] ?? "";
+    const ticks = [...timeAxis.matchAll(/<text x="([^"]+)" y="[^"]+" text-anchor="([^"]+)">([^<]+)<\/text>/g)];
     // Then: all positions remain distinct and accurate relative to tick spacing.
     expect(ticks).toHaveLength(3);
     const labels = ticks.map((tick) => tick[3] ?? "");
@@ -258,6 +277,16 @@ test("closer signed intervals keep their rendered ticks inside readable real App
       })())`)));
       // Then: actual pixels retain the complete leading/sign glyphs at readable type.
       expect(bounds).toEqual({ contained: true, readable: true, distinct: true });
+      if (!detail) {
+        const dataHeight = Number(await page.evaluate(`(()=>{
+          const svg=document.querySelector(${JSON.stringify(selector)}).querySelector('svg');
+          const matrix=svg.getScreenCTM();
+          const positions=[...svg.querySelectorAll('.trace-plot__grid')].map(line=>
+            new DOMPoint(0,Number(line.getAttribute('y1'))).matrixTransform(matrix).y);
+          return Math.max(...positions)-Math.min(...positions);
+        })()`));
+        expect(dataHeight).toBeGreaterThanOrEqual(96);
+      }
       if (detail) {
         await page.evaluate(`(()=>{
           window.__labelSignal=new Promise((resolve,reject)=>{

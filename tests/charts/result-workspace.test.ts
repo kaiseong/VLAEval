@@ -54,6 +54,39 @@ test("same episode in a different run initializes all selection fields from new 
   expect(selection.dimension).toBe(0);
 });
 
+test("default window includes every selected-episode chunk without moving the source selection", () => {
+  const job = fixtureJob("rby1-16");
+  if (!job.result) throw new Error("Fixture missing result");
+  const chunk = (episode: number, frame: number, valid: boolean[]) => ({
+    episode, frame, prompt: "", valid,
+    predicted: valid.map(() => job.result?.actionNames.map(() => 0.1) ?? []),
+    target: valid.map(() => job.result?.actionNames.map(() => 0) ?? []),
+  });
+  const result = { ...job.result, samples: [
+    chunk(3, 2, Array<boolean>(40).fill(true)),
+    chunk(99, 1000, Array<boolean>(40).fill(true)),
+    chunk(3, 0, Array<boolean>(40).fill(true)),
+  ] };
+  const original = structuredClone(result);
+  const selection = initialWorkspaceSelection(job.id, 3, result);
+  expect(selection.window).toEqual({ startFrame: 0, endFrame: 41 });
+  expect(selection.sourceFrame).toBe(0);
+  expect(selection.chunkOrigin).toBe(0);
+  expect(result).toEqual(original);
+});
+
+test("default window excludes padded tails and wholly invalid chunks", () => {
+  const job = fixtureJob("rby1-16");
+  if (!job.result) throw new Error("Fixture missing result");
+  const result = { ...job.result, samples: [9, 100].map((frame) => ({
+    episode: 3, frame, prompt: "", valid: frame === 9 ? [true, true, false, false] : [false, false, false, false],
+    predicted: Array.from({ length: 4 }, () => Array<number>(16).fill(0.1)),
+    target: Array.from({ length: 4 }, () => Array<number>(16).fill(0)),
+  })) };
+  expect(initialWorkspaceSelection(job.id, 3, result).window).toEqual({ startFrame: 0, endFrame: 10 });
+  expect(initialWorkspaceSelection(job.id, 99, result).window).toEqual({ startFrame: 0, endFrame: 0 });
+});
+
 test("missing episode initializes explicit unavailable cursor without borrowing another trace", () => {
   const job = jobSchema.parse(fixtureJob("irregular-frames"));
   if (!job.result) throw new Error("Fixture missing result");
@@ -67,7 +100,8 @@ test("default workspace mounts all sixteen real channel sliders with one selecti
   expect((html.match(/role="slider"/g) ?? []).length).toBe(16);
   const plots = html.match(/<figure[^>]*>/g) ?? [];
   expect(plots.filter((tag) => tag.includes('data-source-frame="0" data-window-start="0" data-window-end="2"')).length).toBe(16);
-  expect(html).toContain('data-view="overview"');
+  expect(html).toContain('data-view="prediction"');
+  expect([...html.matchAll(/data-view-tab="([^"]+)"/g)].map((match) => match[1])).toEqual(["prediction", "metrics", "prerelease"]);
   expect(html).not.toContain('data-fk-channel=');
   expect(html).toContain('data-export="json"');
   expect(html).toContain('data-export="csv"');
@@ -91,4 +125,20 @@ test("job errors stay outside collapsed provenance", () => {
   const html = renderToStaticMarkup(createElement(Results, { job: { ...job, error: "saved result error" } }));
   expect(html.indexOf('role="alert"')).toBeGreaterThan(0);
   expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('<details'));
+});
+
+test("analysis leaves aggregate score tables to the separate evaluation tab", () => {
+  // Given a completed run with distinct first-step and whole-chunk errors.
+  const job = fixtureJob("scalar-padding");
+  if (!job.result) throw new Error("Fixture missing result");
+  // When the actual workspace renders the default selected episode 3.
+  const html = renderToStaticMarkup(createElement(ResultWorkspace, { job, result: job.result }));
+  const values = (scope: string) => {
+    const row = html.match(new RegExp(`<tr data-score-scope="${scope}">([\\s\\S]*?)</tr>`))?.[1] ?? "";
+    return [...row.matchAll(/data-metric="[^"]+" data-value="([^"]+)"/g)].map((match) => Number(match[1]));
+  };
+  // Then no duplicate aggregate table remains in the analysis workspace.
+  expect(values("run-first-step")).toEqual([]);
+  expect(values("run-chunk")).toEqual([]);
+  expect(values("episode-first-step")).toEqual([]);
 });

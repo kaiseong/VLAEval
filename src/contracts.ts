@@ -17,6 +17,15 @@ export const discoverRequestSchema = z.object({
   host: hostSchema,
   roots: z.array(scanPathSchema).min(1).max(16),
 });
+export const openpiCheckpointsRequestSchema = z.object({
+  host: hostSchema,
+  root: scanPathSchema.default("~/.cache/openpi/openpi-assets/checkpoints"),
+});
+export const datasetuiRequestSchema = z.object({
+  host: hostSchema,
+  datasetuiContainer: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/).max(128).default("datasetui-api-1"),
+  datasetuiRoot: pathSchema.default("/mnt/datasetui-nas/DatasetUI"),
+});
 export const jobRequestSchema = connectionSchema.extend({
   config: z.string().min(1).max(200),
   checkpoint: pathSchema,
@@ -37,6 +46,15 @@ export const discoverySchema = z.object({
   datasets: z.array(z.object({
     path: z.string(), name: z.string(), episodes: z.number(), frames: z.number(),
     fps: z.number(), version: z.string(),
+  })),
+  warnings: z.array(z.string()),
+});
+export const checkpointCatalogSchema = discoverySchema.pick({ checkpoints: true, warnings: true });
+export const datasetuiSchema = z.object({
+  datasets: z.array(z.object({
+    id: z.string(), path: pathSchema, name: z.string(), storageArea: z.enum(["raw", "derived"]),
+    episodes: z.number().int().nonnegative().nullable(), frames: z.number().int().nonnegative().nullable(),
+    fps: z.number().finite().nonnegative().nullable(), version: z.string().nullable(),
   })),
   warnings: z.array(z.string()),
 });
@@ -61,17 +79,33 @@ export const resultSchema = z.object({
   config: z.string(), checkpoint: z.string(), dataset: z.string(),
   seed: z.number(), numSteps: z.number(), framesEvaluated: z.number().int(),
   validSteps: z.number().int(), actionNames: z.array(z.string()), fps: z.number().positive(),
+  jointObservations: z.object({
+    names: z.array(z.string()).length(14).refine((names) =>
+      names.every((name, index) => name === `${index < 7 ? "left" : "right"}_arm_${index % 7}`)),
+    unit: z.enum(["rad", "deg"]).nullable(),
+    samples: z.array(z.object({
+      episode: z.number().int(), frame: z.number().int(),
+      positions: z.array(z.number().finite()).length(14),
+    })),
+  }).optional(),
   perEpisode: z.array(z.object({
     episode: z.number().int(), framesEvaluated: z.number().int(), mae: metric, rmse: metric,
+    mse: metric.optional(),
   })),
+  // Full-horizon, valid-row-weighted metrics; perEpisode remains first-step only.
+  perEpisodeChunks: z.array(z.object({
+    episode: z.number().int(), framesEvaluated: z.number().int().nonnegative(),
+    validSteps: z.number().int().positive(), mae: metric, mse: metric, rmse: metric,
+  })).optional(),
   traces: z.array(z.object({
     episode: z.number().int(), frames: z.array(z.number().int()),
     predicted: z.array(z.array(z.number().finite())),
     target: z.array(z.array(z.number().finite())),
   })),
-  perDimension: z.array(z.object({ name: z.string(), mae: metric, rmse: metric })),
+  perDimension: z.array(z.object({ name: z.string(), mae: metric, rmse: metric, mse: metric.optional() })),
   perHorizon: z.array(z.object({
     step: z.number().int(), count: z.number().int(), mae: metric.nullable(), rmse: metric.nullable(),
+    mse: metric.nullable().optional(),
   })),
   coverage: z.object({
     horizon: z.number().int(),
@@ -86,6 +120,7 @@ export const resultSchema = z.object({
     validRows: z.number().int(), validRowsByHorizon: z.array(z.number().int()),
   }).optional(),
   mae: metric, rmse: metric, firstStepMae: metric, firstStepRmse: metric,
+  mse: metric.optional(), firstStepMse: metric.optional(),
   latencyMs: z.object({ median: metric, p95: metric }),
   samples: z.array(z.object({
     episode: z.number().int(), frame: z.number().int(), prompt: z.string(),
@@ -99,6 +134,7 @@ export const progressSchema = z.object({
 });
 export const workerEventSchema = z.discriminatedUnion("type", [
   discoverySchema.extend({ type: z.literal("discovery") }),
+  datasetuiSchema.extend({ type: z.literal("datasetui") }),
   configsSchema.extend({ type: z.literal("configs") }),
   episodesSchema.extend({ type: z.literal("episodes") }),
   z.object({ type: z.literal("started"), pid: z.number().int().min(2) }),
@@ -113,9 +149,23 @@ export const jobSchema = z.object({
   status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
   createdAt: z.string(),
   request: jobRequestSchema,
+  /** Who started the run (name typed in the UI, peer IP); absent for runs recorded before LAN mode. */
+  owner: z.object({ name: z.string().max(40), ip: z.string().max(64) }).optional(),
   progress: progressSchema,
   logs: z.array(z.string()),
   result: resultSchema.nullable(),
   error: z.string().nullable(),
 });
 export type Job = z.infer<typeof jobSchema>;
+export const jobStorageSchema = z.object({
+  directory: pathSchema,
+  totalBytes: z.number().int().nonnegative(),
+  runs: z.array(z.object({
+    id: z.string().uuid(),
+    bytes: z.number().int().nonnegative().nullable(),
+    deletable: z.boolean(),
+  })),
+});
+export type JobStorage = z.infer<typeof jobStorageSchema>;
+export const sessionSchema = z.object({ local: z.boolean(), ip: z.string(), lan: z.boolean() });
+export type Session = z.infer<typeof sessionSchema>;

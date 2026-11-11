@@ -24,7 +24,7 @@ export async function runScenario({ args, outputPath, startHarness }) {
     if (!passed) throw new Error(`Assertion failed: ${name}: ${JSON.stringify(detail)}`);
   }
   function serve(api) {
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: api });
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => api(request) });
     servers.push(server);
     actions.push({ action: "actual-createApi-server-start", url: server.url.href });
     return server;

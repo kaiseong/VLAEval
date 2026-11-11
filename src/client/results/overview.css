@@ -3,40 +3,57 @@
 .overview__heading h2 { font-size: var(--section); margin: 0; }
 .overview__heading p { color: var(--muted); margin: 0; font-size: var(--caption); }
 .overview__legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--caption); color: var(--muted); }
-.overview__legend span { display: inline-flex; align-items: center; gap: var(--s2); }
-.overview__legend i { width: var(--s5); border-top: 2px solid var(--accent); }
-.overview__legend span:last-child i { border-top: 2px dashed var(--target); }
+.overview__legend span { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; overflow-wrap: anywhere; }
+.overview__legend i { width: var(--s5); flex-shrink: 0; border-top: 2px solid var(--accent); }
+.overview__legend i.overview__legend-gt { border-top: 2px dashed var(--target); }
+.overview-tooltip { position: fixed; z-index: 20; overflow: auto; overscroll-behavior: contain; box-sizing: border-box; padding: var(--s3); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--caption); font-variant-numeric: tabular-nums; }
+.overview-tooltip header { display: flex; justify-content: space-between; align-items: start; gap: var(--s2); margin-bottom: var(--s2); }
+.overview-tooltip header strong { color: var(--ink); }
+.overview-tooltip header div, .overview-tooltip p, .overview-tooltip small { color: var(--muted); }
+.overview-tooltip dl { display: block; margin: 0; }
+.overview-tooltip dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s1) var(--s2); }
+.overview-tooltip dd { margin: 0; overflow-wrap: anywhere; }
+.overview-tooltip i { display: inline-block; width: var(--s5); border-top: 2px solid var(--accent); margin-right: var(--s2); vertical-align: middle; }
+.overview-tooltip i.overview__legend-gt { border-top: 2px dashed var(--target); }
+.overview-tooltip table { width: 100%; table-layout: fixed; }
+.overview-tooltip th, .overview-tooltip td { padding: var(--s1); text-align: left; overflow-wrap: anywhere; }
+.overview-tooltip th:last-child { width: 42%; }
+.overview-tooltip td:last-child { font-family: ui-monospace, monospace; }
+.overview-tooltip small { display: block; }
 .overview__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
 .overview__grid--split { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
 .overview__arm { min-width: 0; }
 .overview__arm + .overview__arm { padding-left: var(--s4); border-left: 2px solid var(--line); }
 .overview__arm h3 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
 .overview__arm-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
-.overview__legend i.overview__legend-chunks { border-top: 0; height: 3px; background: linear-gradient(90deg, hsl(220 75% 45%), hsl(110 75% 45%), hsl(0 75% 45%)); }
 .overview-panel { min-width: 0; padding: var(--s2); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.overview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: var(--s1); }
+.overview-panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s1); }
+.overview-panel > header > strong { min-height: 44px; display: flex; align-items: center; font-size: var(--body); }
+.trajectory-detail-panel { min-width: 0; }
+.trajectory-detail-panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); margin-block: var(--s2); }
+.trajectory-detail-panel .trace-plot svg { height: 340px; }
+.fk-configuration { margin-bottom: var(--s3); }
+.fk-configuration > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 .overview-panel button { min-width: 0; min-height: 44px; padding: var(--s1); background: transparent; border: 0; text-align: start; font-size: var(--body); font-weight: 650; overflow-wrap: anywhere; }
 .overview-panel button:hover { background: var(--secondary); }
 .overview-panel button:active { background: var(--wash); }
-.overview-panel__stats { display: flex; flex-wrap: wrap; gap: 0 var(--s2); margin: 0; font-size: var(--caption); }
-.overview-panel__stats > div { display: flex; gap: var(--s1); }
-.overview-panel__stats dt { color: var(--muted); }
-.overview-panel__stats dd { margin: 0; }
-.overview-panel .trace-plot figcaption, .overview-panel .trace-plot__inspection { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.overview-panel .trace-plot svg { height: calc(var(--s8) * 4); }
-.overview-panel .trace-plot svg text { font-size: calc(var(--caption) * 1.25); }
+.overview-panel__stats { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s1); margin: 0; min-width: 0; width: 100%; font-size: var(--caption); }
+.overview-panel__stats > div { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); }
+.overview-panel__stats dt { color: var(--muted); min-width: 0; overflow-wrap: anywhere; word-break: normal; }
+.overview-panel__stats dd { margin: 0; flex-shrink: 0; }
+.overview-panel .trace-plot figcaption, .overview-panel .trace-plot__inspection, .trajectory-detail-panel .trace-plot figcaption { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.overview-panel .trace-plot svg { height: calc(var(--s8) * 6); }
+.overview-panel .trace-plot svg text { font-size: var(--caption); }
 .overview-panel .trace-plot__inspection { margin: 0; }
 .overview-panel__unavailable, .overview__notice { color: var(--muted); font-size: var(--body); overflow-wrap: anywhere; }
 @media (max-width: 760px) {
-  .overview__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview__grid, .overview__arm-panels { grid-template-columns: minmax(0, 1fr); }
   .overview__grid--split { grid-template-columns: minmax(0, 1fr); }
   .overview__arm + .overview__arm { padding-left: 0; border-left: 0; padding-top: var(--s3); border-top: 2px solid var(--line); }
   .overview-panel > header { flex-direction: column; align-items: stretch; }
   .overview-panel button { width: 100%; }
   .overview-panel__stats { flex-direction: column; }
   .overview-panel .trace-plot__inspection { font-size: var(--body); }
-  .overview-panel .trace-plot svg { height: 160px; }
-  .overview-panel .trace-plot svg text { font-size: var(--caption); }
   /* Narrow plots keep the end tick; the shared header labels both window bounds. */
   .overview-panel .trace-plot svg:has(> text:nth-of-type(5)) > text:nth-of-type(-n+2) { visibility: hidden; }
 }

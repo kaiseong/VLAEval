@@ -1,0 +1,17 @@
+#!/bin/sh
+# VLAEval interpreter on Thor, installed as <repo>/.venv/bin/python.
+# Outside the container it starts `python3` in the openpi image with the same host paths
+# (home, DatasetUI NAS), as the SSH user and in the host PID namespace, so the evaluator's
+# PIDs, cancel (kill -TERM) and parent-death checks work unchanged. Inside, it is plain python3.
+set -eu
+if [ "${VLAEVAL_IN_CONTAINER:-}" = 1 ]; then exec python3 "$@"; fi
+nas=/mnt/datasetui-nas
+if [ -d "$nas/DatasetUI" ]; then nas_mount="-v $nas:$nas:ro"; else nas_mount=""; fi
+# shellcheck disable=SC2086  # $nas_mount is intentionally split into two words.
+exec docker run --rm -i --runtime nvidia --pid=host --ipc=host --network=none \
+  --user "$(id -u):$(id -g)" --group-add video --group-add 993 \
+  -e HOME="$HOME" -e VLAEVAL_IN_CONTAINER=1 -e VLAEVAL_MASK_DTYPE_FIX="${VLAEVAL_MASK_DTYPE_FIX:-1}" \
+  -e PYTHONDONTWRITEBYTECODE -e XLA_PYTHON_CLIENT_PREALLOCATE -e CUDA_VISIBLE_DEVICES \
+  -e HF_HUB_OFFLINE -e HF_DATASETS_OFFLINE \
+  -v "$HOME:$HOME" $nas_mount -w "$PWD" \
+  "${VLAEVAL_THOR_IMAGE:-openpi-pi0.5:vlaeval}" python3 "$@"

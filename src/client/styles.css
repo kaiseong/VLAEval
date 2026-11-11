@@ -62,10 +62,15 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--caption)/1.6 v
 .workspace-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); }
 .workspace-header h1 { font-size: var(--section); white-space: nowrap; }
 .workspace-header .brand .badge { margin-inline-start: 0; }
-.workspace-header > .field { flex: 1; min-width: 0; }
+.workspace-header > .field { flex: 1 1 calc(var(--s8) * 6); min-width: 0; }
 .workspace-header > .field select { text-overflow: ellipsis; }
 .workspace-header .rail-footer { margin: 0; }
-.workspace-header .field { gap: var(--s1); font-size: var(--caption); }
+.workspace-header .field { flex-direction: row; align-items: center; gap: var(--s2); font-size: var(--caption); }
+.workspace-header .field > span { flex-shrink: 0; white-space: nowrap; }
+.workspace-header .field > select { flex: 1; width: auto; }
+.workspace-header > .field:has([data-user-name]) { flex: 0 1 auto; }
+.workspace-header [data-user-name] { width: 9em; }
+.workspace-header [data-user-name][aria-invalid="true"] { border-color: var(--danger); }
 .workspace-nav { display: flex; gap: var(--s2); }
 .workspace-nav button[aria-pressed="true"] { background: var(--wash); }
 .connection-disclosure { margin-bottom: var(--s5); padding: var(--s3) var(--s4); }
@@ -103,6 +108,8 @@ nav a svg { width: 18px; height: 18px; }
 .step-number { display: grid; place-items: center; min-width: 32px; min-height: 32px; background: var(--secondary); border-radius: var(--radius-small); font: 600 var(--caption)/1 var(--mono); }
 .panel > .field, .panel > button { margin-bottom: var(--s4); }
 .preparation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); margin-bottom: var(--s5); }
+.artifact-picker { display: grid; gap: var(--s2); min-width: 0; margin-block: var(--s4); }
+.artifact-picker select { width: 100%; min-width: 0; }
 .dataset-summary { display: flex; gap: var(--s4); padding: var(--s5); background: var(--secondary); border-radius: var(--radius); margin: var(--s6) 0; }
 .dataset-summary p { color: var(--muted); margin-top: var(--s2); }
 .notice { padding: var(--s4); border-radius: var(--radius); background: var(--secondary); overflow-wrap: anywhere; }
@@ -175,7 +182,6 @@ tbody td { font-family: var(--mono); }
 .history-row strong, .history-row small { display: block; }
 .history-row strong { overflow-wrap: anywhere; }
 .history-row small { margin-top: var(--s1); }
-.logs pre { max-height: 320px; overflow-y: auto; }
 .page-footer { color: var(--muted); font-size: var(--caption); padding-bottom: var(--s4); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .skip-link { position: fixed; top: var(--s2); left: var(--s2); transform: translateY(-200%); padding: var(--s3); background: var(--surface); z-index: 10; }
@@ -192,7 +198,7 @@ tbody td { font-family: var(--mono); }
   .app-shell > .main { padding: var(--s4) max(var(--s4), env(safe-area-inset-right)) calc(var(--s4) + env(safe-area-inset-bottom)); }
   .workspace-header > .field { flex-basis: 100%; }
   .workspace-header .workspace-nav { width: 100%; display: flex; }
-  .workspace-nav button { flex: 1; }
+  .workspace-nav button { flex: 1; padding-inline: var(--s1); gap: var(--s1); font-size: var(--caption); white-space: nowrap; }
   .workspace-header .rail-footer { flex: 1; }
   .connection-disclosure .connection { grid-template-columns: minmax(0, 1fr); }
   .sidebar { overflow: visible; border-inline-end: 0; border-bottom: 1px solid var(--line); padding: var(--s5) max(var(--s4), env(safe-area-inset-left)); gap: var(--s4); }

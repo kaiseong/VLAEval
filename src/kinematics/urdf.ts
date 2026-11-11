@@ -9,7 +9,7 @@ export type UrdfCompileErrorCode =
   | "unsafe_xml" | "invalid_xml" | "invalid_document"
   | "duplicate_link" | "duplicate_joint" | "missing_node"
   | "cycle" | "mimic_joint" | "unsupported_joint"
-  | "invalid_number" | "invalid_axis" | "invalid_chain";
+  | "invalid_number" | "invalid_axis" | "invalid_chain" | "invalid_limit";
 
 export class UrdfCompileError extends Error {
   constructor(readonly code: UrdfCompileErrorCode, message: string) {
@@ -38,6 +38,7 @@ type SourceJoint = {
   readonly parentLink: string; readonly childLink: string;
   readonly origin: { readonly xyz: Vector3; readonly rpy: Vector3 };
   readonly axis: Vector3 | null; readonly mimic: boolean;
+  readonly limit: { readonly lower: number; readonly upper: number } | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,6 +96,20 @@ function parseJoint(element: XmlElement): SourceJoint {
   const child = singleChild(element, "child", context);
   const origin = singleChild(element, "origin", context);
   const axisElement = childElements(element, "axis")[0];
+  const limits = childElements(element, "limit");
+  let limit: SourceJoint["limit"] = null;
+  if (type === "revolute" && limits.length > 0) {
+    const source = singleChild(element, "limit", context);
+    // A missing limit element stays compatible with legacy FK descriptors.
+    // A present but incomplete/invalid position limit is not silently discarded.
+    const lowerText = requiredAttribute(source, "lower", `${context} limit`).trim();
+    const upperText = requiredAttribute(source, "upper", `${context} limit`).trim();
+    const lower = Number(lowerText), upper = Number(upperText);
+    if (!lowerText || !upperText || !Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) {
+      throw new UrdfCompileError("invalid_limit", `${context} requires finite ordered radian position limits`);
+    }
+    limit = { lower, upper };
+  }
   return {
     name,
     type,
@@ -106,6 +121,7 @@ function parseJoint(element: XmlElement): SourceJoint {
     },
     axis: axisElement === undefined ? null : parseVector(axisElement, "xyz", `${context} axis`),
     mimic: childElements(element, "mimic").length > 0,
+    limit,
   };
 }
 
@@ -188,7 +204,17 @@ function compileArmChain(
     );
   }
 
+  return compileChain(chain);
+}
+
+function compileChain(chain: readonly SourceJoint[]): CompiledJoint[] {
   return chain.map((joint): CompiledJoint => {
+    if (joint.mimic) {
+      throw new UrdfCompileError("mimic_joint", `Chain joint ${joint.name} uses a mimic declaration`);
+    }
+    if (joint.type !== "fixed" && joint.type !== "revolute") {
+      throw new UrdfCompileError("unsupported_joint", `Chain joint ${joint.name} has unsupported type ${joint.type}`);
+    }
     const common = {
       name: joint.name,
       parentLink: joint.parentLink,
@@ -199,16 +225,12 @@ function compileArmChain(
     if (joint.axis === null) {
       throw new UrdfCompileError("invalid_axis", `Revolute joint ${joint.name} is missing its axis`);
     }
-    return { ...common, type: "revolute", axis: normalizeAxis(joint.axis, joint.name) };
+    return { ...common, type: "revolute", axis: normalizeAxis(joint.axis, joint.name),
+      ...(joint.limit === null ? {} : { limit: joint.limit }) };
   });
 }
 
-export function compileUrdfProfile(xml: string, metadata: UrdfProfileMetadata): CompiledProfile {
-  for (const [name, value] of Object.entries(metadata)) {
-    if (value.trim().length === 0) {
-      throw new UrdfCompileError("invalid_document", `Profile metadata ${name} must not be empty`);
-    }
-  }
+function parseUrdfGraph(xml: string, requiredLinks: readonly string[]): SourceJoint[] {
   if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(xml)) {
     throw new UrdfCompileError("unsafe_xml", "DTD and entity declarations are not allowed in URDF input");
   }
@@ -232,7 +254,7 @@ export function compileUrdfProfile(xml: string, metadata: UrdfProfileMetadata): 
     if (links.has(name)) throw new UrdfCompileError("duplicate_link", `Duplicate URDF link ${name}`);
     links.add(name);
   }
-  for (const required of ["link_torso_5", "ee_right", "ee_left"]) {
+  for (const required of requiredLinks) {
     if (!links.has(required)) throw new UrdfCompileError("missing_node", `URDF is missing required link ${required}`);
   }
 
@@ -255,7 +277,22 @@ export function compileUrdfProfile(xml: string, metadata: UrdfProfileMetadata): 
     joints.push(joint);
   }
   assertAcyclic(links, joints);
+  return joints;
+}
 
+/** Strict source-ordered root-to-mount chain; no arm naming or length assumptions. */
+export function compileMountChain(xml: string, rootLink: string, mountLink: string): CompiledJoint[] {
+  const joints = parseUrdfGraph(xml, [rootLink, mountLink]);
+  return compileChain(chainToTip(rootLink, mountLink, joints));
+}
+
+export function compileUrdfProfile(xml: string, metadata: UrdfProfileMetadata): CompiledProfile {
+  for (const [name, value] of Object.entries(metadata)) {
+    if (value.trim().length === 0) {
+      throw new UrdfCompileError("invalid_document", `Profile metadata ${name} must not be empty`);
+    }
+  }
+  const joints = parseUrdfGraph(xml, ["link_torso_5", "ee_right", "ee_left"]);
   const rootLink = "link_torso_5";
   const tips = { right: "ee_right", left: "ee_left" } as const;
   const rightChain = compileArmChain("right", joints);

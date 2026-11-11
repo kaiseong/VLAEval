@@ -139,7 +139,7 @@ test("serves exact production responses when called over ephemeral local HTTP", 
   // Given
   const { api, path, xml } = await setup();
   const expected = compileUrdfProfile(xml, { sourcePath: path, model: "RBY1_A", revision: "v1.2" });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: api });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => api(request) });
   try {
     // When
     const response = await fetch(new URL(`/api/kinematics/profiles/${expected.profileHash}`, server.url), {

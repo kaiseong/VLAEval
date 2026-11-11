@@ -37,6 +37,41 @@ function expectCompileError(xml: string, code: UrdfCompileErrorCode): void {
 }
 
 describe("local URDF profile compiler", () => {
+  test("preserves optional asymmetric position limits in radians", () => {
+    const xml = fixtureXml()
+      .replace('name="right_arm_1" type="revolute">', 'name="right_arm_1" type="revolute"><limit lower="-3.141592654" upper="0.017453293" effort="70" velocity="3.14" />')
+      .replace('name="left_arm_1" type="revolute">', 'name="left_arm_1" type="revolute"><limit lower="-0.017453293" upper="3.141592654" />');
+    const profile = compile(xml);
+    expect(profile.rightChain[1]).toMatchObject({ limit: { lower: -3.141592654, upper: 0.017453293 } });
+    expect(profile.leftChain[1]).toMatchObject({ limit: { lower: -0.017453293, upper: 3.141592654 } });
+    expect(profile.rightChain[0]).not.toHaveProperty("limit");
+    expect(compiledProfileSchema.parse(profile)).toEqual(profile);
+  });
+
+  test("rejects malformed present limits instead of inventing position bounds", () => {
+    for (const attributes of ['lower="NaN" upper="1"', 'lower="-1" upper="Infinity"',
+      'lower="2" upper="1"', 'lower=" " upper="1"']) {
+      const xml = fixtureXml().replace('name="right_arm_1" type="revolute">',
+        `name="right_arm_1" type="revolute"><limit ${attributes} />`);
+      expectCompileError(xml, "invalid_limit");
+    }
+    for (const attributes of ['lower="-1"', 'upper="1"', 'effort="70"']) {
+      expectCompileError(fixtureXml().replace('name="right_arm_1" type="revolute">',
+        `name="right_arm_1" type="revolute"><limit ${attributes} />`), "invalid_document");
+    }
+  });
+
+  test("validates finite ordered compiled bounds while retaining legacy no-limit profiles", () => {
+    const profile = compile(fixtureXml());
+    for (const limit of [{ lower: NaN, upper: 1 }, { lower: -1, upper: Infinity }, { lower: 1, upper: -1 }]) {
+      const rightChain = profile.rightChain.map((joint) => joint.type === "fixed" ? joint : { ...joint, limit });
+      expect(compiledProfileSchema.safeParse({ ...profile, rightChain }).success).toBe(false);
+    }
+    const rightChain = profile.rightChain.map((joint) => joint.type === "fixed" ? joint : { ...joint, limit: { lower: 0, upper: 0 } });
+    expect(compiledProfileSchema.safeParse({ ...profile, rightChain }).success).toBe(true);
+    expect(compiledProfileSchema.parse(profile)).toEqual(profile);
+  });
+
   test("compiles both model fixtures to exact named seven-joint chains", () => {
     const profiles = [compile(fixtureXml("a"), "a"), compile(fixtureXml("m"), "m")];
     const sides = ["right", "left"] as const;

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createChannelLayout } from "../../src/client/analysis/channel-layout";
-import { OverviewGrid, overviewChannels } from "../../src/client/results/OverviewGrid";
+import { OverviewGrid, overviewChannels, drawnChunks } from "../../src/client/results/OverviewGrid";
 import type { OverviewGridProps } from "../../src/client/results/OverviewGrid";
 
 const names = [
@@ -113,4 +113,68 @@ test("predicted chunks are drawn per anchor over GT and replace the first-step l
   const firstPanel = rendered.split('class="overview-panel"')[1] ?? "";
   expect(firstPanel).not.toMatch(/class="trace-plot__predicted"><g/);
   expect(firstPanel).toContain('data-mae="4"');
+});
+
+test("compact legend stays fixed while visible trajectories retain color and selection", () => {
+  const chunks = [9, 0, 3].map((frame) => ({
+    frame, predicted: [[frame, 1], [frame + 1, 2]],
+    target: [[0, 1], [0, 1]], valid: [true, true],
+  }));
+  const rendered = markup({ chunks, sourceFrame: 9, window: { startFrame: 3, endFrame: 10 } });
+  expect([...rendered.matchAll(/data-legend="([^"]+)"/g)].map((entry) => entry[1])).toEqual(["gt", "predicted"]);
+  const firstPanel = rendered.split('class="overview-panel"')[1] ?? "";
+  for (const [frame, color, selected] of [[3, "hsl(110 75% 45%)", false], [9, "hsl(0 75% 45%)", true]] as const) {
+    const path = firstPanel.match(new RegExp(`data-overlay="chunk-${frame}"[^>]*>`));
+    expect(path).not.toBeNull();
+    expect(path?.[0]).toContain(`stroke="${color}"`);
+    expect(path?.[0].includes("trace-plot__overlay--emphasized")).toBe(selected);
+  }
+});
+
+test("zoom retains chunks whose horizon overlaps the window before its first scored anchor", () => {
+  const chunks = [0, 10, 30].map((frame) => ({
+    frame, predicted: Array.from({ length: 20 }, () => [1]), target: Array.from({ length: 20 }, () => [2]),
+    valid: Array.from({ length: 20 }, () => true),
+  }));
+  const result = drawnChunks(chunks, { startFrame: 15, endFrame: 20 }, 0);
+  expect(result.kept.map(({ chunk }) => chunk.frame)).toEqual([0, 10]);
+});
+
+test("detail draws every full valid chunk rather than the overview subset or first steps", () => {
+  const chunks = Array.from({ length: 60 }, (_, frame) => ({
+    frame, predicted: [[frame, 1], [frame + 1, 2], [frame + 2, 3], [frame + 3, 4]],
+    target: [[0, 1], [0, 1], [0, 1], [0, 1]], valid: [true, true, true, false],
+  }));
+  const rendered = markup({ chunks, detailDimension: 1, sourceFrame: 3, window: { startFrame: 0, endFrame: 61 } });
+  expect((rendered.match(/class="trajectory-detail-panel"/g) ?? []).length).toBe(1);
+  expect(rendered).toContain('data-channel-name="action_1" data-source-index="1"');
+  expect(rendered).toContain('class="trace-plot trace-plot--detail"');
+  const paths = [...rendered.matchAll(/data-overlay="chunk-(\d+)"[^>]* d="([^"]+)"/g)];
+  expect(paths.map((path) => Number(path[1]))).toEqual(Array.from({ length: 60 }, (_, i) => i));
+  for (const path of paths) expect(path[2]?.match(/[ML]/g)).toHaveLength(3);
+  expect(rendered).toContain('data-overlay="gt"');
+  expect(rendered).not.toContain('class="trace-plot__predicted"><g');
+  expect(rendered).not.toContain('class="trace-plot__legend"');
+});
+
+test("single-point tails and isolated valid chunk steps remain visible in detail", () => {
+  const rendered = markup({ detailDimension: 0, chunks: [
+    { frame: 0, predicted: [[1], [2], [3]], target: [[0], [0], [0]], valid: [true, false, true] },
+    { frame: 9, predicted: [[4], [5]], target: [[0], [0]], valid: [true, false] },
+  ] });
+  const points = [...rendered.matchAll(/data-overlay-point="(chunk-\d+)" data-source-frame="(\d+)"/g)];
+  expect(points.map((point) => [point[1], Number(point[2])])).toEqual([["chunk-0", 0], ["chunk-0", 2], ["chunk-9", 9]]);
+});
+
+test("a single selected chunk retains its color across overview and detail", () => {
+  const chunks = [0, 3, 9].map((frame) => ({
+    frame, predicted: [[1, 2], [2, 3]], target: [[0, 0], [0, 0]], valid: [true, true],
+  }));
+  for (const detailDimension of [undefined, 0]) {
+    const rendered = markup({ chunks, chunkOrigin: 3, ...(detailDimension === undefined ? {} : { detailDimension }) });
+    expect(rendered).toContain('data-overlay="chunk-3" fill="none" stroke="hsl(110 75% 45%)"');
+    expect(rendered).not.toContain('data-overlay="chunk-0"');
+    expect(rendered).not.toContain('data-overlay="chunk-9"');
+    expect(rendered).toContain('data-overlay="gt"');
+  }
 });
