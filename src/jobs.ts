@@ -55,8 +55,13 @@ export class JobStore {
   private readonly listeners = new Map<string, Set<Listener>>();
   private readonly deleting = new Set<string>();
   private readonly writingDiagnostics = new Set<string>();
-  private active: ActiveRun | null = null;
+  /** One evaluation per evaluation host; different hosts run side by side. */
+  private readonly active = new Map<string, ActiveRun>();
   private diagnosticActive: { readonly jobId: string; readonly runId: string } | null = null;
+
+  private activeRun(id: string): ActiveRun | undefined {
+    return [...this.active.values()].find((run) => run.job.id === id);
+  }
 
   constructor(
     private directory: string,
@@ -110,7 +115,7 @@ export class JobStore {
     diagnosticPacketSchema.innerType().shape.identity.shape.frame.parse(frame);
     const job = this.get(id);
     const result = job.result;
-    if (job.status !== "completed" || !result || this.active?.job.id === id || this.deleting.has(id))
+    if (job.status !== "completed" || !result || this.activeRun(id) !== undefined || this.deleting.has(id))
       throw new JobError("Diagnostics require a stored, completed run", 409);
     if (!result.traces.some((trace) => trace.episode === episode && trace.frames.includes(frame))
       && !result.samples.some((sample) => sample.episode === episode && sample.frame === frame && sample.valid[0]))
@@ -120,7 +125,7 @@ export class JobStore {
 
   acquireDiagnosticRun(id: string, episode: number, frame: number, runId: string): Job {
     const job = this.diagnosticJob(id, episode, frame);
-    if (this.active || this.diagnosticActive || this.writingDiagnostics.size > 0)
+    if (this.active.size > 0 || this.diagnosticActive || this.writingDiagnostics.size > 0)
       throw new JobError("Evaluation or diagnostics already owns the execution slot", 409);
     this.diagnosticActive = { jobId: id, runId };
     return job;
@@ -131,7 +136,7 @@ export class JobStore {
     attentionVideoSchema.innerType().shape.identity.shape.episode.parse(episode);
     const job = this.get(id);
     const result = job.result;
-    if (job.status !== "completed" || !result || this.active?.job.id === id || this.deleting.has(id))
+    if (job.status !== "completed" || !result || this.activeRun(id) !== undefined || this.deleting.has(id))
       throw new JobError("Attention video requires a stored, completed run", 409);
     if (!result.traces.some((trace) => trace.episode === episode) && !result.samples.some((sample) => sample.episode === episode))
       throw new JobError("Attention video episode must be part of the saved run", 400);
@@ -141,7 +146,7 @@ export class JobStore {
   /** Shares the single diagnostic GPU slot, so it excludes evaluation, diagnostics, deletion and publication. */
   acquireAttentionVideoRun(id: string, episode: number, runId: string): Job {
     const job = this.attentionVideoJob(id, episode);
-    if (this.active || this.diagnosticActive || this.writingDiagnostics.size > 0)
+    if (this.active.size > 0 || this.diagnosticActive || this.writingDiagnostics.size > 0)
       throw new JobError("Evaluation or diagnostics already owns the execution slot", 409);
     this.diagnosticActive = { jobId: id, runId };
     return job;
@@ -318,7 +323,7 @@ export class JobStore {
         id: job.id,
         bytes: safe ? bytes : null,
         deletable: safe && isTerminal(job)
-          && this.active?.job.id !== job.id && this.diagnosticActive?.jobId !== job.id
+          && this.activeRun(job.id) === undefined && this.diagnosticActive?.jobId !== job.id
           && !this.deleting.has(job.id) && !this.writingDiagnostics.has(job.id),
       };
     }));
@@ -332,7 +337,7 @@ export class JobStore {
   async delete(id: string): Promise<void> {
     const job = this.get(id);
     // Terminal status precedes final persistence; active must also be clear.
-    if (!isTerminal(job) || this.active?.job.id === id || this.diagnosticActive?.jobId === id
+    if (!isTerminal(job) || this.activeRun(id) !== undefined || this.diagnosticActive?.jobId === id
       || this.deleting.has(id) || this.writingDiagnostics.has(id)) {
       throw new JobError("실행 중이거나 정리 중인 평가는 삭제할 수 없습니다.", 409);
     }
@@ -402,8 +407,8 @@ export class JobStore {
   }
 
   async start(request: JobRequest, owner?: Owner): Promise<Job> {
-    if (this.active || this.diagnosticActive)
-      throw new JobError("이미 평가 또는 진단이 실행 중입니다. 완료하거나 취소한 뒤 시작하세요.", 409);
+    if (this.active.has(request.host) || this.diagnosticActive)
+      throw new JobError("이 평가 서버에서 이미 평가 또는 진단이 실행 중입니다. 완료하거나 취소한 뒤 시작하세요.", 409);
     const job: Job = {
       id: crypto.randomUUID(), status: "queued", createdAt: new Date().toISOString(), request,
       ...(owner ? { owner: { ...owner } } : {}),
@@ -411,12 +416,12 @@ export class JobStore {
       logs: [], result: null, error: null,
     };
     const run: ActiveRun = { job, pid: null, cancelRequested: false, cancelSending: false };
-    this.active = run;
+    this.active.set(request.host, run);
     this.jobs.set(job.id, job);
     try {
       await this.persist(job);
     } catch (error) {
-      this.active = null;
+      this.active.delete(request.host);
       this.jobs.delete(job.id);
       throw error;
     }
@@ -482,15 +487,15 @@ export class JobStore {
         job.status = "failed";
         job.error = `결과 저장 실패: ${error instanceof Error ? error.message : String(error)}`;
       }
-      this.active = null;
+      if (this.active.get(job.request.host) === run) this.active.delete(job.request.host);
       this.publish(job);
     }
   }
 
   async requestCancel(id: string): Promise<Job> {
     const job = this.get(id);
-    const run = this.active;
-    if (isTerminal(job) || !run || run.job.id !== id) return job;
+    const run = this.activeRun(id);
+    if (isTerminal(job) || !run) return job;
     run.cancelRequested = true;
     job.progress.message = "취소 요청 중: 원격 worker 종료 확인을 기다립니다.";
     this.publish(job);
@@ -499,12 +504,12 @@ export class JobStore {
   }
 
   private async signalCancel(run: ActiveRun): Promise<void> {
-    if (run.pid === null || run.cancelSending || this.active !== run) return;
+    if (run.pid === null || run.cancelSending || this.active.get(run.job.request.host) !== run) return;
     run.cancelSending = true;
     try {
       await this.cancel(run.job.request.host, run.pid);
     } catch (error) {
-      if (this.active === run && !isTerminal(run.job)) {
+      if (this.active.get(run.job.request.host) === run && !isTerminal(run.job)) {
         run.job.error = `취소 요청 실패: ${error instanceof Error ? error.message : String(error)}`;
         this.log(run.job, run.job.error);
       }

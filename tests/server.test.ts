@@ -150,6 +150,28 @@ describe("job lifecycle", () => {
     expect(restored.get(job.id).result?.perHorizon).toEqual(resultFixture.perHorizon);
   });
 
+  test("each evaluation host runs one job while another host runs its own", async () => {
+    const gates = new Map([[request.host, Promise.withResolvers<void>()]]);
+    const thor = remoteTargets.find((target) => target.host !== request.host);
+    if (!thor) throw new Error("A second target is required");
+    gates.set(thor.host, Promise.withResolvers<void>());
+    const store = new JobStore(await makeDirectory(), async (remote) => { await gates.get(remote.host)?.promise; });
+    await store.initialize();
+    const first = await store.start(request);
+    const second = await store.start({ ...request, host: thor.host, repo: thor.repo });
+    await expect(store.start(request)).rejects.toMatchObject({ status: 409 });
+    await expect(store.start({ ...request, host: thor.host, repo: thor.repo })).rejects.toMatchObject({ status: 409 });
+    // Finishing one host frees only that host.
+    const firstDone = terminal(store, first.id);
+    gates.get(request.host)?.resolve();
+    await firstDone;
+    const third = await store.start(request);
+    await expect(store.start({ ...request, host: thor.host, repo: thor.repo })).rejects.toMatchObject({ status: 409 });
+    const rest = [terminal(store, second.id), terminal(store, third.id)];
+    gates.get(thor.host)?.resolve();
+    await Promise.all(rest);
+  });
+
   test("persists worker failure and does not invent a completed result", async () => {
     const directory = await makeDirectory();
     const gate = Promise.withResolvers<void>();

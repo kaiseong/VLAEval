@@ -5,7 +5,7 @@ import {
   configsSchema, connectionSchema, discoverySchema, discoverRequestSchema,
   episodesRequestSchema, episodesSchema, jobRequestSchema, jobSummarySchema, sessionSchema, type JobSummary, type Session,
 } from "../contracts";
-import { api, computeLabel, createdJobSchema, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
+import { api, computeLabel, createdJobSchema, runDevice, errorMessage, isActive, mergeJob, ownerLabel, ownsJob, savedUser, saveUser, statusLabels } from "./api";
 import { Results } from "./Results";
 import { EvaluationResults } from "./results/EvaluationResults";
 import { HistoryManager } from "./HistoryManager";
@@ -72,7 +72,10 @@ export function App() {
   const mounted = useRef(true);
   const metadataController = useRef<AbortController | null>(null);
   const active = jobs.filter(isActive);
-  const locked = active.length > 0 || Boolean(busy) || historyState !== "ready";
+  // Each evaluation host runs one job; another host stays available while this one is busy.
+  const hostBusy = active.some((job) => job.request.host === settings.host);
+  const waiting = Boolean(busy) || historyState !== "ready";
+  const locked = hostBusy || waiting;
   const displayed = jobs.find((job) => job.id === displayId);
   // TensorRT is offered only where the target builds engines; a choice made for Thor is not sent elsewhere.
   const useTensorrt = tensorrt && Boolean(targetFor(settings.host)?.tensorrt);
@@ -305,14 +308,14 @@ export function App() {
       {view === "preparation" && discovery && <div className="notice"><strong>탐색 완료</strong><p>저장소 {discovery.repositories.length} · 체크포인트 {discovery.checkpoints.length} · 데이터셋 {discovery.datasets.length}</p>{discovery.warnings.length > 0 && <details><summary>탐색 주의사항 {discovery.warnings.length}개</summary><div className="warning-list" tabIndex={0} role="region" aria-label="탐색 주의사항">{discovery.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div></details>}</div>}
       {streamError && <div className="notice" role="status"><p>{streamError}</p><button onClick={() => { setStreamError(""); setStreamVersion((value) => value + 1); }}><RefreshCw size={16} aria-hidden="true" />다시 연결</button></div>}
       {active.map((job) => <section className="run-progress panel" key={job.id} aria-label="진행 중인 평가">
-        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config}{computeLabel(job.request)}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id || !ownsJob(session, job)} {...(ownsJob(session, job) ? {} : { title: `${ownerLabel(job)}님이 실행 중인 평가입니다.` })} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
+        <div className="cluster spread"><div><span className="badge">{statusLabels[job.status]}</span><strong>{job.request.config} · {runDevice(job.request)}</strong><p>{job.progress.message || "평가 작업을 준비하고 있습니다."}</p></div><button className="danger" disabled={cancelling === job.id || !ownsJob(session, job)} {...(ownsJob(session, job) ? {} : { title: `${ownerLabel(job)}님이 실행 중인 평가입니다.` })} onClick={() => void cancelJob(job.id)}><Square size={15} aria-hidden="true" />{cancelling === job.id ? "취소 요청 중…" : "평가 취소"}</button></div>
         <progress aria-label="평가 진행률" value={job.progress.completed} max={Math.max(1, job.progress.total)} />
         <p className="mono" role="status">{job.progress.completed.toLocaleString()} / {job.progress.total.toLocaleString()} 프레임</p>
       </section>)}
       <form id="prepare" hidden={view !== "preparation"} onSubmit={(event) => { event.preventDefault(); if (prepared && !locked) void startJob(); }}>
         <details className="panel connection-disclosure" id="connection">
           <summary><Settings2 size={16} aria-hidden="true" /> 연결 설정 <span className="muted path">{targetFor(settings.host)?.label ?? settings.host}</span></summary>
-          <fieldset className="connection" disabled={locked}>
+          <fieldset className="connection" disabled={waiting}>
             <legend><Terminal size={16} aria-hidden="true" /> SSH 연결</legend>
             <Field label="평가 서버"><select value={targetFor(settings.host)?.id ?? ""} onChange={(event) => selectTarget(event.target.value)}>{!targetFor(settings.host) && <option value="">직접 입력</option>}{remoteTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</select></Field>
             <Field label="대상 호스트"><input value={settings.host} onChange={(event) => updateSettings("host", event.target.value)} spellCheck={false} /></Field>
@@ -370,7 +373,7 @@ export function App() {
           <div className="launch-bar"><div><strong>{stride === 1 && maxSamples === 0 ? "선택 에피소드의 모든 프레임 평가" : "사용자 지정 샘플링으로 평가"}{computeLabel({ tensorrt: useTensorrt })}</strong><p>{selected.length ? `${selected.length}개 에피소드 · 원본 ${selectedFrames.toLocaleString()} 프레임` : "모델, 데이터셋, 에피소드를 먼저 선택하세요."}</p></div><button className="primary" type="submit" disabled={!prepared || locked}><Play size={17} aria-hidden="true" />평가 시작</button></div>
         </fieldset>
       </form>
-      {locked && <p className="muted">{active.length ? "진행 중인 평가가 있어 요청 설정이 잠겨 있습니다. 결과와 실행 기록은 계속 확인할 수 있습니다." : historyState !== "ready" ? "저장된 실행 상태를 확인한 뒤 새 평가를 시작할 수 있습니다." : "현재 요청이 끝나면 설정을 변경할 수 있습니다."}</p>}
+      {locked && <p className="muted">{hostBusy ? "이 평가 서버에서 진행 중인 평가가 있어 요청 설정이 잠겨 있습니다. 연결 설정에서 다른 평가 서버를 고르면 바로 시작할 수 있습니다." : historyState !== "ready" ? "저장된 실행 상태를 확인한 뒤 새 평가를 시작할 수 있습니다." : "현재 요청이 끝나면 설정을 변경할 수 있습니다."}</p>}
       <div id="results" hidden={view !== "analysis"}>
         {displayed?.result ? <Results key={displayed.id} job={displayed} /> : <Section title="평가 결과" subtitle="저장된 실행을 선택하거나 새 평가를 시작하세요.">
           <div className="empty"><Activity size={32} aria-hidden="true" /><h3>{displayed ? statusLabels[displayed.status] : "아직 표시할 결과가 없습니다"}</h3><p>{displayed?.error || (displayed?.status === "cancelled" ? "평가가 취소되었습니다. 설정을 확인한 후 새 평가를 시작하세요." : displayed && isActive(displayed) ? "평가가 끝나면 액션 그래프와 수치 지표가 표시됩니다." : "선택한 에피소드의 예측과 정답을 여기서 비교합니다.")}</p></div>
