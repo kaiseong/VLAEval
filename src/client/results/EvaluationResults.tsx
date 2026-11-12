@@ -51,8 +51,11 @@ export function EvaluationResults({ jobs, selectedId, onSelect }: {
             : <fieldset><legend>함께 표시할 저장된 평가</legend>
               {completed.filter((job) => job.id !== base.id).map((job) => <label key={job.id}>
                 <input type="checkbox" data-compare-run={job.id} checked={comparisonIds.includes(job.id)}
-                  onChange={(event) => setComparisonIds((current) => event.currentTarget.checked
-                    ? [...current, job.id] : current.filter((id) => id !== job.id))} />
+                  onChange={(event) => {
+                    // Read now: React may run the updater after the event, when currentTarget is null.
+                    const checked = event.currentTarget.checked;
+                    setComparisonIds((current) => checked ? [...current, job.id] : current.filter((id) => id !== job.id));
+                  }} />
                 <span>{runLabel(job)}</span>
               </label>)}
             </fieldset>}
