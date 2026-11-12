@@ -56,6 +56,8 @@ test("separate results tab compares full chunks across models and all episodes",
     expect([await cell('[data-result-episode="3"]', "p99"), await cell('[data-result-episode="3"]', "max")]).toEqual([3, 3]);
     expect(await page.evaluate(`document.querySelector('[data-evaluation-table="overall"] [data-run-device]').textContent`))
       .toBe("추론: qa@localhost");
+    expect(await page.evaluate(`document.querySelector('[data-evaluation-base]').selectedOptions[0].text`))
+      .toContain("10 step · EP 2개 · 3 frames");
     expect(await page.evaluate(`document.querySelector('[data-evaluation-table="overall"] [data-metric="max"] small').textContent`))
       .toBe("EP 9 · frame 0 · step 1 · action_0");
     await state(page, `document.querySelectorAll('[data-evaluation-table="overall"] tbody tr').length===2`,

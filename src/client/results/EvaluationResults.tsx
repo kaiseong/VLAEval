@@ -10,8 +10,11 @@ import "./evaluation-results.css";
 const rangeAt = (range: ErrorRange) => `EP ${range.at.episode} · frame ${range.at.frame} · step ${range.at.step} · ${range.at.dimension}`;
 
 const checkpointName = (job: CompletedEvaluation) => job.result.checkpoint.split("/").filter(Boolean).slice(-2).join("/");
+/** Inference steps, episode count and evaluated frames, so runs of different scope are told apart when picked. */
+const runScope = (job: CompletedEvaluation) =>
+  `${job.result.numSteps} step · EP ${job.result.perEpisode.length}개 · ${job.result.framesEvaluated.toLocaleString()} frames`;
 const runLabel = (job: CompletedEvaluation) =>
-  `${job.result.config} · ${runDevice(job.request)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
+  `${job.result.config} · ${runDevice(job.request)} · ${runScope(job)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
 
 export function EvaluationResults({ jobs, selectedId, onSelect }: {
   readonly jobs: readonly JobSummary[];
@@ -32,6 +35,7 @@ export function EvaluationResults({ jobs, selectedId, onSelect }: {
     <strong>{job.result.config}{job.id === base?.id ? " · 기준" : ""}</strong>
     <span title={job.result.checkpoint}>{checkpointName(job)}</span>
     <span data-run-device>추론: {runDevice(job.request)}</span>
+    <span data-run-scope>{runScope(job)}</span>
     <small>{new Date(job.createdAt).toLocaleString("ko-KR")} · {job.id.slice(0, 8)}</small>
   </div>;
   const headings = <><th scope="col">모델 / 체크포인트</th><th scope="col">평가 프레임</th>
