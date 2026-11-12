@@ -49,6 +49,13 @@ test("separate results tab compares full chunks across models and all episodes",
     expect(await page.evaluate(`Number(document.querySelector('[data-evaluation-table="overall"] [data-metric="mse"]').dataset.value)`)).toBe(13.2);
     expect(await page.evaluate(`Number(document.querySelector('[data-result-episode="3"] [data-metric="mse"]').dataset.value)`)).toBeCloseTo(14 / 3, 12);
     expect(await page.evaluate(`Number(document.querySelector('[data-result-episode="9"] [data-metric="mse"]').dataset.value)`)).toBe(26);
+    // Min/max |error| over valid rows: EP 3 rows 1, 3, 2 (the invalid 100 is skipped); EP 9 rows 4, 6.
+    const cell = (scope: string, metric: string) =>
+      page.evaluate(`Number(document.querySelector('${scope} [data-metric="${metric}"]').dataset.value)`);
+    expect([await cell('[data-evaluation-table="overall"]', "min"), await cell('[data-evaluation-table="overall"]', "max")]).toEqual([1, 6]);
+    expect([await cell('[data-result-episode="3"]', "min"), await cell('[data-result-episode="3"]', "max")]).toEqual([1, 3]);
+    expect(await page.evaluate(`document.querySelector('[data-evaluation-table="overall"] [data-metric="max"] small').textContent`))
+      .toBe("EP 9 · frame 0 · step 1 · action_0");
     await state(page, `document.querySelectorAll('[data-evaluation-table="overall"] tbody tr').length===2`,
       `document.querySelector('.evaluation-compare').open=true;document.querySelector('[data-compare-run="${other.id}"]').click();`);
     expect(await page.evaluate(`document.querySelectorAll('[data-evaluation-table="episodes"] tbody tr').length`)).toBe(4);

@@ -5,7 +5,9 @@ import { api, errorMessage } from "../api";
 
 /** One episode as the result views expect it: the run's aggregates plus only that episode's arrays. */
 export function episodeResult(summary: ResultSummary, data: EpisodeData, samples: Result["samples"]): Result {
-  const { episodes: _episodes, episodeChunkMetrics: _metrics, comparison: _comparison, jointObservations, ...aggregates } = summary;
+  const {
+    episodes: _episodes, episodeChunkMetrics: _metrics, errorRange: _range, comparison: _comparison, jointObservations, ...aggregates
+  } = summary;
   return {
     ...aggregates,
     traces: data.trace ? [data.trace] : [],

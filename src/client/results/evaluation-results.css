@@ -14,3 +14,6 @@
 .evaluation-provenance { overflow-wrap: anywhere; font-size: var(--caption); }
 .evaluation-provenance > div + div { margin-top: var(--s3); }
 .evaluation-unavailable { display: block; max-width: calc(var(--s8) * 10); white-space: normal; text-align: start; }
+
+/* Where the largest error occurs, under the max cell. */
+.evaluation-max-at { display: block; color: var(--muted); font-size: var(--caption); white-space: nowrap; }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { maximumSamplesPage } from "./contracts";
-import type { EpisodeData, EpisodeSamples, Job, JobSummary, Result, ResultSummary } from "./contracts";
+import type { EpisodeData, EpisodeSamples, ErrorRange, Job, JobSummary, Result, ResultSummary } from "./contracts";
 import { getEpisodeChunkMetrics } from "./client/analysis/evaluation-results";
 import { rawTraceCsv } from "./client/analysis/exports";
 import { scoredFramesKey, validMasksKey } from "./client/analysis/run-comparison";
@@ -43,6 +43,40 @@ function episodes(result: Result): ReadonlyMap<number, Episode> {
   return byEpisode;
 }
 
+/** Min and max |predicted - target| over valid chunk rows, for the run and for each episode with valid rows. */
+export function errorRanges(result: Result): ResultSummary["errorRange"] {
+  const ranges = new Map<number, ErrorRange>();
+  let overall: ErrorRange | null = null;
+  for (const sample of result.samples) {
+    let range = ranges.get(sample.episode) ?? null;
+    sample.predicted.forEach((row, step) => {
+      const target = sample.target[step];
+      if (!sample.valid[step] || !target) return;
+      row.forEach((value, dim) => {
+        const error = Math.abs(value - (target[dim] ?? Number.NaN));
+        if (!Number.isFinite(error)) return;
+        if (!range) range = { min: error, max: error, at: { episode: sample.episode, frame: sample.frame, step,
+          dimension: result.actionNames[dim] ?? String(dim) } };
+        else {
+          range.min = Math.min(range.min, error);
+          if (error > range.max) range = { ...range, max: error, at: { episode: sample.episode, frame: sample.frame, step,
+            dimension: result.actionNames[dim] ?? String(dim) } };
+        }
+      });
+    });
+    if (!range) continue;
+    ranges.set(sample.episode, range);
+  }
+  for (const range of ranges.values()) {
+    overall = !overall ? { ...range } : {
+      min: Math.min(overall.min, range.min),
+      max: Math.max(overall.max, range.max),
+      at: range.max > overall.max ? range.at : overall.at,
+    };
+  }
+  return { overall, episodes: [...ranges].map(([episode, range]) => ({ episode, ...range })) };
+}
+
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function summarizeResult(result: Result): ResultSummary {
@@ -57,6 +91,7 @@ export function summarizeResult(result: Result): ResultSummary {
       observations: item.observations?.length ?? 0,
     })),
     episodeChunkMetrics: [...getEpisodeChunkMetrics(result)],
+    errorRange: errorRanges(result),
     comparison: {
       scoredFrames: digest(scoredFramesKey(result)), validMasks: digest(validMasksKey(result)), samples: samples.length,
     },

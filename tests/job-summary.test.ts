@@ -10,7 +10,7 @@ import type { Job, Result } from "../src/contracts";
 import { getEpisodeChunkMetrics } from "../src/client/analysis/evaluation-results";
 import { rawTraceCsv } from "../src/client/analysis/exports";
 import { isTerminal, JobStore } from "../src/jobs";
-import { episodeData, episodeSamples, resultJsonStream, summarizeResult } from "../src/job-summary";
+import { episodeData, episodeSamples, errorRanges, resultJsonStream, summarizeResult } from "../src/job-summary";
 import { resultFixture } from "./result-fixture";
 
 const directories: string[] = [];
@@ -77,6 +77,25 @@ describe("job summaries", () => {
     expect(pages.flatMap((page) => page.samples)).toEqual(result.samples);
     expect(episodeData(result, 2)).toMatchObject({ samples: 0, observations: [{ episode: 2, frame: 0 }] });
     expect(() => episodeData(result, 9)).toThrow("저장되지 않은 EP");
+  });
+
+  test("error ranges cover valid rows of every step and dimension and locate the largest error", () => {
+    const result = resultSchema.parse({
+      ...resultFixture, actionNames: ["joint", "gripper"],
+      samples: [
+        { episode: 1, frame: 4, prompt: "", predicted: [[1, -2], [9, 0]], target: [[0.5, 0], [0, 0]], valid: [true, false] },
+        { episode: 2, frame: 0, prompt: "", predicted: [[0, 0], [0, 7]], target: [[0, 0.25], [0, 0]], valid: [true, true] },
+      ],
+    });
+    // The invalid row (9) is skipped; EP 2's largest error is step 1 of the gripper.
+    expect(errorRanges(result)).toEqual({
+      overall: { min: 0, max: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
+      episodes: [
+        { episode: 1, min: 0.5, max: 2, at: { episode: 1, frame: 4, step: 0, dimension: "gripper" } },
+        { episode: 2, min: 0, max: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
+      ],
+    });
+    expect(summarizeResult(result).errorRange).toEqual(errorRanges(result));
   });
 
   test("results without joint observations report null observations", () => {
