@@ -1,6 +1,7 @@
 import ky, { HTTPError } from "ky";
 import { z } from "zod";
 import { jobSchema, type Job, type Session } from "../contracts";
+import { targetFor } from "../targets";
 
 /** Fields shared by stored jobs and the job summaries the API sends. */
 type JobState = Pick<Job, "id" | "status" | "createdAt" | "owner" | "progress">;
@@ -28,6 +29,12 @@ export function ownsJob(session: Session | null, job: JobState): boolean {
 }
 
 /** " · TensorRT" for runs computed with a TensorRT engine, "" otherwise; appended to run labels. */
+/** Where and how a run was computed, e.g. "Thor · TensorRT"; older runs record only the host. */
+export function runDevice(request: { readonly host: string; readonly tensorrt: boolean }): string {
+  const device = targetFor(request.host)?.label.split(" · ")[0] ?? request.host;
+  return request.tensorrt ? `${device} · TensorRT` : device;
+}
+
 export function computeLabel(request: { readonly tensorrt: boolean }): string {
   return request.tensorrt ? " · TensorRT" : "";
 }

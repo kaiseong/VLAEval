@@ -164,7 +164,7 @@ export type Job = z.infer<typeof jobSchema>;
 export type Result = NonNullable<Job["result"]>;
 const jointObservationsSchema = resultSchema.shape.jointObservations.unwrap();
 const errorRangeSchema = z.object({
-  min: metric, max: metric,
+  max: metric, p99: metric,
   at: z.object({ episode: z.number().int(), frame: z.number().int(), step: z.number().int(), dimension: z.string() }),
 });
 export type ErrorRange = z.infer<typeof errorRangeSchema>;
@@ -188,8 +188,8 @@ export const resultSummarySchema = resultSchema.omit({ traces: true, samples: tr
     mae: metric.nullable(), mse: metric.nullable(), rmse: metric.nullable(), reason: z.string().nullable(),
   })),
   /**
-   * Smallest and largest |predicted - target| over every valid chunk row and action dimension (native units, like MAE),
-   * for the run and per episode; `at` is where the largest one occurs.
+   * Largest and 99th-percentile (nearest rank) |predicted - target| over every valid chunk row and action dimension
+   * (native units, like MAE), for the run and per episode; `at` is where the largest one occurs.
    */
   errorRange: z.object({
     overall: errorRangeSchema.nullable(),

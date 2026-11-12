@@ -43,38 +43,52 @@ function episodes(result: Result): ReadonlyMap<number, Episode> {
   return byEpisode;
 }
 
-/** Min and max |predicted - target| over valid chunk rows, for the run and for each episode with valid rows. */
+/** p99 by nearest rank on ascending values. */
+const p99 = (sorted: Float64Array) => sorted[Math.ceil(0.99 * sorted.length) - 1] ?? 0;
+
+/**
+ * Largest and 99th-percentile |predicted - target| over valid chunk rows (every step and dimension), for the run and
+ * each episode with valid rows. All errors go into one buffer grouped by episode (8 bytes each, ~80 MB for a
+ * 400 MB run) so every percentile is exact; the summary is computed once per stored result.
+ */
 export function errorRanges(result: Result): ResultSummary["errorRange"] {
-  const ranges = new Map<number, ErrorRange>();
-  let overall: ErrorRange | null = null;
-  for (const sample of result.samples) {
-    let range = ranges.get(sample.episode) ?? null;
-    sample.predicted.forEach((row, step) => {
-      const target = sample.target[step];
-      if (!sample.valid[step] || !target) return;
-      row.forEach((value, dim) => {
-        const error = Math.abs(value - (target[dim] ?? Number.NaN));
-        if (!Number.isFinite(error)) return;
-        if (!range) range = { min: error, max: error, at: { episode: sample.episode, frame: sample.frame, step,
-          dimension: result.actionNames[dim] ?? String(dim) } };
-        else {
-          range.min = Math.min(range.min, error);
-          if (error > range.max) range = { ...range, max: error, at: { episode: sample.episode, frame: sample.frame, step,
-            dimension: result.actionNames[dim] ?? String(dim) } };
-        }
-      });
+  const errors = function* (sample: Result["samples"][number]) {
+    for (let step = 0; step < sample.predicted.length; step++) {
+      const target = sample.target[step], row = sample.predicted[step];
+      if (!sample.valid[step] || !target || !row) continue;
+      for (let dim = 0; dim < row.length; dim++) {
+        const error = Math.abs((row[dim] ?? Number.NaN) - (target[dim] ?? Number.NaN));
+        if (Number.isFinite(error)) yield { error, step, dim };
+      }
+    }
+  };
+  const counts = new Map<number, number>();
+  for (const sample of result.samples) for (const _ of errors(sample)) counts.set(sample.episode, (counts.get(sample.episode) ?? 0) + 1);
+  const offsets = new Map<number, number>();
+  let total = 0;
+  for (const [episode, count] of counts) { offsets.set(episode, total); total += count; }
+  const all = new Float64Array(total);
+  const cursor = new Map(offsets);
+  const largest = new Map<number, ErrorRange["at"] & { max: number }>();
+  for (const sample of result.samples) for (const { error, step, dim } of errors(sample)) {
+    const index = cursor.get(sample.episode) ?? 0;
+    all[index] = error;
+    cursor.set(sample.episode, index + 1);
+    const top = largest.get(sample.episode);
+    if (!top || error > top.max) largest.set(sample.episode, {
+      max: error, episode: sample.episode, frame: sample.frame, step, dimension: result.actionNames[dim] ?? String(dim),
     });
-    if (!range) continue;
-    ranges.set(sample.episode, range);
   }
-  for (const range of ranges.values()) {
-    overall = !overall ? { ...range } : {
-      min: Math.min(overall.min, range.min),
-      max: Math.max(overall.max, range.max),
-      at: range.max > overall.max ? range.at : overall.at,
-    };
-  }
-  return { overall, episodes: [...ranges].map(([episode, range]) => ({ episode, ...range })) };
+  const range = ({ max, ...at }: ErrorRange["at"] & { max: number }, sorted: Float64Array): ErrorRange =>
+    ({ max, p99: p99(sorted), at });
+  const episodes = [...counts.keys()].map((episode) => {
+    const from = offsets.get(episode) ?? 0, segment = all.subarray(from, from + (counts.get(episode) ?? 0)).sort();
+    const top = largest.get(episode);
+    return top ? { episode, ...range(top, segment) } : null;
+  }).filter((item) => item !== null);
+  const top = [...largest.values()].reduce<(ErrorRange["at"] & { max: number }) | null>(
+    (best, item) => !best || item.max > best.max ? item : best, null);
+  return { overall: top ? range(top, all.sort()) : null, episodes };
 }
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");

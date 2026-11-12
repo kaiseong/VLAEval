@@ -89,13 +89,31 @@ describe("job summaries", () => {
     });
     // The invalid row (9) is skipped; EP 2's largest error is step 1 of the gripper.
     expect(errorRanges(result)).toEqual({
-      overall: { min: 0, max: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
+      overall: { max: 7, p99: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
       episodes: [
-        { episode: 1, min: 0.5, max: 2, at: { episode: 1, frame: 4, step: 0, dimension: "gripper" } },
-        { episode: 2, min: 0, max: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
+        { episode: 1, max: 2, p99: 2, at: { episode: 1, frame: 4, step: 0, dimension: "gripper" } },
+        { episode: 2, max: 7, p99: 7, at: { episode: 2, frame: 0, step: 1, dimension: "gripper" } },
       ],
     });
     expect(summarizeResult(result).errorRange).toEqual(errorRanges(result));
+  });
+
+  test("p99 is the nearest-rank percentile of each episode's errors and of the whole run", () => {
+    // EP 0 errors 1..200 (shuffled by frame order), EP 1 one error of 1000.
+    const errors = Array.from({ length: 200 }, (_, index) => ((index * 37) % 200) + 1);
+    const result = resultSchema.parse({
+      ...resultFixture, actionNames: ["joint"],
+      samples: [
+        ...errors.map((error, frame) => ({ episode: 0, frame, prompt: "", predicted: [[error]], target: [[0]], valid: [true] })),
+        { episode: 1, frame: 0, prompt: "", predicted: [[-1000]], target: [[0]], valid: [true] },
+      ],
+    });
+    const ranges = errorRanges(result);
+    expect(ranges.episodes.map(({ episode, max, p99 }) => ({ episode, max, p99 }))).toEqual([
+      { episode: 0, max: 200, p99: 198 }, { episode: 1, max: 1000, p99: 1000 },
+    ]);
+    // 201 errors: rank ceil(0.99 * 201) = 199 -> 199.
+    expect([ranges.overall?.max, ranges.overall?.p99]).toEqual([1000, 199]);
   });
 
   test("results without joint observations report null observations", () => {

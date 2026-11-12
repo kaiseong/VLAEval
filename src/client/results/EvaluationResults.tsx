@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ErrorRange, JobSummary } from "../../contracts";
-import { computeLabel } from "../api";
+import { computeLabel, runDevice } from "../api";
 import { Field, Section } from "../ui/primitives";
 import { formatMetric, metricLabels, metricMse } from "../analysis/metrics";
 import { comparisonDifferences, comparisonDifferenceLabels, isCompletedEvaluation } from "../analysis/run-comparison";
@@ -11,7 +11,7 @@ const rangeAt = (range: ErrorRange) => `EP ${range.at.episode} · frame ${range.
 
 const checkpointName = (job: CompletedEvaluation) => job.result.checkpoint.split("/").filter(Boolean).slice(-2).join("/");
 const runLabel = (job: CompletedEvaluation) =>
-  `${job.result.config}${computeLabel(job.request)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
+  `${job.result.config} · ${runDevice(job.request)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
 
 export function EvaluationResults({ jobs, selectedId, onSelect }: {
   readonly jobs: readonly JobSummary[];
@@ -31,18 +31,19 @@ export function EvaluationResults({ jobs, selectedId, onSelect }: {
   const identity = (job: CompletedEvaluation) => <div className="evaluation-model">
     <strong>{job.result.config}{job.id === base?.id ? " · 기준" : ""}</strong>
     <span title={job.result.checkpoint}>{checkpointName(job)}</span>
+    <span data-run-device>추론: {runDevice(job.request)}</span>
     <small>{new Date(job.createdAt).toLocaleString("ko-KR")} · {job.id.slice(0, 8)}</small>
   </div>;
   const headings = <><th scope="col">모델 / 체크포인트</th><th scope="col">평가 프레임</th>
     <th scope="col">유효 청크 행</th><th scope="col">{metricLabels.mae}</th>
     <th scope="col">{metricLabels.mse}</th><th scope="col">{metricLabels.rmse}</th>
-    <th scope="col">최소 오차 (|예측−정답|)</th><th scope="col">최대 오차 (|예측−정답|)</th></>;
+    <th scope="col">p99 오차 (|예측−정답|)</th><th scope="col">최대 오차 (|예측−정답|)</th></>;
   const metricCells = (mae: number | null, mse: number | null, rmse: number | null) =>
     <><td data-metric="mae" data-value={mae ?? "unavailable"}>{formatMetric(mae)}</td>
       <td data-metric="mse" data-value={mse ?? "unavailable"}>{formatMetric(mse)}</td>
       <td data-metric="rmse" data-value={rmse ?? "unavailable"}>{formatMetric(rmse)}</td></>;
   const rangeCells = (range: ErrorRange | null | undefined) =>
-    <><td data-metric="min" data-value={range?.min ?? "unavailable"}>{formatMetric(range?.min ?? null)}</td>
+    <><td data-metric="p99" data-value={range?.p99 ?? "unavailable"}>{formatMetric(range?.p99 ?? null)}</td>
       <td data-metric="max" data-value={range?.max ?? "unavailable"} title={range ? rangeAt(range) : undefined}>
         {formatMetric(range?.max ?? null)}{range && <small className="evaluation-max-at">{rangeAt(range)}</small>}</td></>;
 
@@ -104,8 +105,8 @@ export function EvaluationResults({ jobs, selectedId, onSelect }: {
             </tbody></table>
         </div>
         <p className="muted">전체 값은 유효 비교 수로 통합하며 EP별 평균의 단순 평균이 아닙니다.
-          {" "}MAE/RMSE와 최소/최대 오차는 원본 단위, MSE는 원본 단위의 제곱입니다. 최소/최대는 유효 청크 행의 모든 스텝·차원에서
-          고르므로 단위가 다른 차원(관절 rad, 그리퍼 등)이 섞입니다. 최대 오차 아래에 위치(EP·frame·step·차원)를 적었습니다. 부족한 저장 데이터는 —로 표시합니다.</p>
+          {" "}MAE/RMSE와 p99/최대 오차는 원본 단위, MSE는 원본 단위의 제곱입니다. p99/최대는 유효 청크 행의 모든 스텝·차원
+          오차에서 구하므로(p99는 nearest rank) 단위가 다른 차원(관절 rad, 그리퍼 등)이 섞입니다. 최대 오차 아래에 위치(EP·frame·step·차원)를 적었습니다. 부족한 저장 데이터는 —로 표시합니다.</p>
         <details className="evaluation-provenance"><summary>비교 실행 정보</summary>
           {entries.map(({ job }) => <div key={job.id}><strong>{runLabel(job)}</strong>
             <p>데이터셋: {job.result.dataset}</p><p>체크포인트: {job.result.checkpoint}</p>
