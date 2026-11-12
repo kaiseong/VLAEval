@@ -10,9 +10,9 @@ import "./evaluation-results.css";
 const rangeAt = (range: ErrorRange) => `EP ${range.at.episode} · frame ${range.at.frame} · step ${range.at.step} · ${range.at.dimension}`;
 
 const checkpointName = (job: CompletedEvaluation) => job.result.checkpoint.split("/").filter(Boolean).slice(-2).join("/");
-/** How many frames were inferred, over how many episodes, and the denoising steps, so runs of different scope are told apart. */
+/** How many frames were inferred, over how many episodes, so runs of different scope are told apart. */
 const runScope = (job: CompletedEvaluation) =>
-  `추론 ${job.result.framesEvaluated.toLocaleString()}프레임 · EP ${job.result.perEpisode.length}개 · 디노이징 ${job.result.numSteps}스텝`;
+  `추론 ${job.result.framesEvaluated.toLocaleString()}프레임 · EP ${job.result.perEpisode.length}개`;
 const runLabel = (job: CompletedEvaluation) =>
   `${job.result.config} · ${runDevice(job.request)} · ${runScope(job)} · ${checkpointName(job)} · ${new Date(job.createdAt).toLocaleString("ko-KR")} · ${job.id.slice(0, 8)}`;
 
