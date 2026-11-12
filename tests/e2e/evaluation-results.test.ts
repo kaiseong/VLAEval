@@ -57,7 +57,7 @@ test("separate results tab compares full chunks across models and all episodes",
     expect(await page.evaluate(`document.querySelector('[data-evaluation-table="overall"] [data-run-device]').textContent`))
       .toBe("추론: qa@localhost");
     expect(await page.evaluate(`document.querySelector('[data-evaluation-base]').selectedOptions[0].text`))
-      .toContain("10 step · EP 2개 · 3 frames");
+      .toContain("추론 3프레임 · EP 2개 · 디노이징 10스텝");
     expect(await page.evaluate(`document.querySelector('[data-evaluation-table="overall"] [data-metric="max"] small').textContent`))
       .toBe("EP 9 · frame 0 · step 1 · action_0");
     await state(page, `document.querySelectorAll('[data-evaluation-table="overall"] tbody tr').length===2`,
